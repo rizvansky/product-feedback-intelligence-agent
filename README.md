@@ -90,3 +90,6 @@ ______________________________________________________________________
 
 - [Product Proposal](docs/product-proposal.md)
 - [Governance & Risk Register](docs/governance.md)
+- [System Design](docs/system-design.md)
+- [Architecture Diagrams](docs/diagrams/README.md)
+- [Module Specs](docs/specs/README.md)
