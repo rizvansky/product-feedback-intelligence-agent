@@ -15,6 +15,7 @@ def build_report_markdown(
     *,
     degraded_mode: bool,
     diagnostics: dict[str, object],
+    executive_summary_override: str | None = None,
 ) -> tuple[str, str]:
     """Build the Markdown report and executive summary for a session.
 
@@ -25,11 +26,14 @@ def build_report_markdown(
         alerts: Generated anomaly alerts.
         degraded_mode: Whether the run completed in degraded mode.
         diagnostics: Supplemental runtime diagnostics to surface in the report.
+        executive_summary_override: Optional precomputed summary from an LLM agent.
 
     Returns:
         Tuple of ``(markdown_report, executive_summary)``.
     """
-    executive_summary = _build_executive_summary(clusters, alerts, degraded_mode)
+    executive_summary = executive_summary_override or _build_executive_summary(
+        clusters, alerts, degraded_mode
+    )
     lines = [
         f"# PFIA Report for {session_id}",
         "",

@@ -1,8 +1,8 @@
 # Product Feedback Intelligence Agent (PFIA)
 
-PFIA — это PoC-система для пакетного анализа пользовательского фидбека: загрузка CSV/JSON, анонимизация PII, тематическая кластеризация, приоритизация проблем, anomaly detection, Markdown-отчёт и grounded Q&A по уже обработанной сессии.
+PFIA - это PoC-система для пакетного анализа пользовательского фидбека: загрузка CSV/JSON, анонимизация PII, тематическая кластеризация, приоритизация проблем, anomaly detection, Markdown-отчёт и grounded Q&A по уже обработанной сессии.
 
-Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite и persisted retrieval index на диске. Поддержка `OPENAI_API_KEY` подготовлена на уровне конфигурации, но для базового прогона не требуется.
+Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite и persisted retrieval index на диске. При наличии `OPENAI_API_KEY` можно включить OpenAI-backed multi-agent runtime, а при сбое или отсутствии ключа сервис автоматически возвращается к deterministic fallback path.
 
 ## Live Demo
 
@@ -42,7 +42,15 @@ PFIA — это PoC-система для пакетного анализа по
   - priority scoring;
   - anomaly detection по weekly baseline;
   - Markdown report + executive summary.
+- Опциональный OpenAI multi-agent слой:
+  - `PreprocessReviewAgent` для second-pass review пограничных `spam` / `injection_suspected` / `low_information` флагов;
+  - `ClusterReviewAgent` для merge/split review поверх детерминированной кластеризации;
+  - `TaxonomyAgent` для label/summary refinement по анонимизированным примерам;
+  - `AnomalyExplainerAgent` для PM-friendly anomaly explanations;
+  - `ExecutiveSummaryAgent` для executive summary;
+  - `QueryPlannerAgent` + `AnswerWriterAgent` для tool-using grounded Q&A.
 - Grounded Q&A с tool-like retrieval:
+  - `top_clusters`;
   - `search_clusters`;
   - `get_quotes`;
   - `get_trend`;
@@ -94,6 +102,8 @@ docker compose up --build
 
 `docker-compose.yml` использует `.env.example` с безопасными offline-дефолтами, так что для demo дополнительная настройка не нужна.
 
+Примечание: внутри Docker data dir принудительно переопределяется в `/app/data/runtime`, поэтому локальный host-path и контейнерный path не конфликтуют.
+
 Остановка:
 
 ```bash
@@ -131,6 +141,8 @@ PYTHONPATH=src ./.venv/bin/python -m pfia.worker
 make run-embedded
 ```
 
+`Makefile` для локальных команд принудительно использует `PFIA_DATA_DIR=data/runtime`, даже если в `.env` остались контейнерные настройки.
+
 Тесты:
 
 ```bash
@@ -143,6 +155,35 @@ make run-embedded
 make test
 make demo
 ```
+
+### OpenAI Multi-Agent Mode
+
+Чтобы включить настоящий OpenAI-backed multi-agent runtime, задай в `.env`:
+
+```bash
+PFIA_GENERATION_BACKEND=openai
+OPENAI_API_KEY=<your_openai_key>
+PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini
+PFIA_LLM_MAX_TOOL_STEPS=4
+```
+
+Что меняется в этом режиме:
+
+- `PreprocessReviewAgent` делает second-pass review для borderline heuristic flags;
+- `ClusterReviewAgent` делает LLM-guided merge/split review после детерминированной кластеризации;
+- кластерные label/summary уточняются через `TaxonomyAgent`;
+- anomaly explanations пишет `AnomalyExplainerAgent`;
+- executive summary пишет `ExecutiveSummaryAgent`;
+- Q&A выполняется через `QueryPlannerAgent` и `AnswerWriterAgent`, которые оркестрируют retrieval tools;
+- при проблемах с OpenAI система откатывается на локальный deterministic fallback вместо hard failure.
+
+Почему архитектура сделана именно так:
+
+- deterministic core оставлен для parsing, privacy, dedupe, clustering, scoring, anomaly detection и state machine;
+- LLM-слой используется там, где нужен semantic judgment, planning или human-readable interpretation;
+- fallback обязателен, потому что PoC не должен зависеть от внешнего API как от единственной точки отказа.
+
+Подробное обоснование вынесено в [docs/llm-runtime.md](docs/llm-runtime.md).
 
 ## Демонстрационный Сценарий
 
@@ -177,11 +218,11 @@ make demo
 
 Основные endpoints:
 
-- `POST /api/sessions/upload` — принять CSV/JSON и создать `session` + `job`
-- `GET /api/sessions/{session_id}` — статус, clusters, alerts, report, event timeline
-- `GET /api/sessions/{session_id}/report` — report artifact
-- `POST /api/sessions/{session_id}/chat` — grounded Q&A
-- `GET /api/demo/sample-file` — скачать demo CSV
+- `POST /api/sessions/upload` - принять CSV/JSON и создать `session` + `job`
+- `GET /api/sessions/{session_id}` - статус, clusters, alerts, report, event timeline
+- `GET /api/sessions/{session_id}/report` - report artifact
+- `POST /api/sessions/{session_id}/chat` - grounded Q&A
+- `GET /api/demo/sample-file` - скачать demo CSV
 - `GET /health/live`
 - `GET /health/ready`
 - `GET /metrics`
@@ -190,12 +231,12 @@ make demo
 
 Проверки, выполненные на текущем состоянии проекта:
 
-- `pytest`: `6 passed`
+- `pytest`: `12 passed`
 - локальный smoke batch-flow
 - локальный smoke grounded Q&A
 - `docker compose build`
 - `docker compose up -d`
-- e2e upload → process → chat через живой Docker API
+- e2e upload -> process -> chat через живой Docker API
 - hosted Railway deployment:
   - public URL отвечает;
   - `/health/live` возвращает `{"status":"ok"}`;

@@ -7,13 +7,24 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from pfia.analysis import AnalysisArtifacts, analyze_reviews
+from pfia.analysis import AnalysisArtifacts, analyze_reviews, build_alerts
 from pfia.config import Settings, get_settings
 from pfia.db import Database, utcnow
 from pfia.errors import PFIAError
+from pfia.llm_agents import (
+    explain_alerts_with_llm,
+    generate_executive_summary_with_llm,
+    review_clusters_with_llm,
+    review_preprocessing_flags_with_llm,
+    refine_clusters_with_llm,
+)
 from pfia.metrics import Metrics
 from pfia.models import JobStage, JobStatus, SessionStatus, UploadResponse
-from pfia.preprocessing import preprocess_upload, write_sanitized_jsonl
+from pfia.preprocessing import (
+    preprocess_upload,
+    refresh_summary_flag_counts,
+    write_sanitized_jsonl,
+)
 from pfia.qna import answer_question
 from pfia.reporting import build_report_markdown, write_report
 from pfia.repository import Repository
@@ -284,10 +295,25 @@ class PFIAService:
             "Preprocessing started.",
         )
         reviews, summary = preprocess_upload(upload_path, session_id, self.settings)
+        reviewed_reviews, preprocess_agent_meta = review_preprocessing_flags_with_llm(
+            reviews,
+            self.settings,
+        )
+        reviews = reviewed_reviews
+        summary = refresh_summary_flag_counts(summary, reviews)
         sanitized_path = self.settings.sanitized_dir / f"{session_id}.jsonl"
         write_sanitized_jsonl(sanitized_path, reviews)
         self.repo.save_preprocessing_summary(session_id, summary)
         self.repo.replace_reviews(session_id, reviews)
+        if preprocess_agent_meta.get("used"):
+            self.repo.log_event(
+                job_id,
+                session_id,
+                JobStage.preprocess,
+                "job.preprocess.llm_review",
+                "INFO",
+                "LLM borderline review adjusted preprocessing flags.",
+            )
         if summary.quarantined_records:
             self.metrics.pii_quarantine_total.inc(summary.quarantined_records)
         if summary.injection_hits:
@@ -346,6 +372,82 @@ class PFIAService:
             "INFO",
             f"Built {len(analysis.clusters)} clusters. Quality={analysis.diagnostics['quality_score']:.3f}.",
         )
+        reviewed_clusters, updated_mapping, cluster_review_meta = (
+            review_clusters_with_llm(
+                analysis.clusters,
+                reviews,
+                analysis.cluster_by_review,
+                self.settings,
+            )
+        )
+        analysis.clusters = reviewed_clusters
+        analysis.cluster_by_review = updated_mapping
+        analysis.alerts = build_alerts(analysis.clusters, reviews)
+        analysis.diagnostics["cluster_review_agent"] = cluster_review_meta
+        self.repo.log_event(
+            job_id,
+            session_id,
+            JobStage.cluster,
+            "job.cluster.review",
+            "INFO",
+            "Cluster review agent finished merge/split evaluation.",
+        )
+        self.repo.set_job_state(
+            job_id,
+            status=JobStatus.degraded_running
+            if analysis.degraded_mode
+            else JobStatus.running,
+            stage=JobStage.label_and_summarize,
+            degraded_mode=analysis.degraded_mode,
+            message="Refining labels and summaries",
+        )
+        self.repo.log_event(
+            job_id,
+            session_id,
+            JobStage.label_and_summarize,
+            "job.label.start",
+            "INFO",
+            "Label and summary refinement started.",
+        )
+        refined_clusters, agent_meta = refine_clusters_with_llm(
+            analysis.clusters,
+            reviews,
+            self.settings,
+        )
+        analysis.clusters = refined_clusters
+        analysis.diagnostics["taxonomy_agent"] = agent_meta
+        self.repo.log_event(
+            job_id,
+            session_id,
+            JobStage.label_and_summarize,
+            "job.label.done",
+            "INFO",
+            "Label and summary refinement completed.",
+        )
+        explained_alerts, anomaly_meta = explain_alerts_with_llm(
+            analysis.alerts,
+            analysis.clusters,
+            self.settings,
+        )
+        analysis.alerts = explained_alerts
+        analysis.diagnostics["anomaly_explainer_agent"] = anomaly_meta
+        self.repo.set_job_state(
+            job_id,
+            status=JobStatus.degraded_running
+            if analysis.degraded_mode
+            else JobStatus.running,
+            stage=JobStage.score,
+            degraded_mode=analysis.degraded_mode,
+            message="Persisting scores and ranked clusters",
+        )
+        self.repo.log_event(
+            job_id,
+            session_id,
+            JobStage.score,
+            "job.score.done",
+            "INFO",
+            "Priority scoring completed.",
+        )
         self.repo.update_review_analysis(
             session_id, analysis.sentiment_by_review, analysis.cluster_by_review
         )
@@ -399,6 +501,18 @@ class PFIAService:
             degraded_mode=degraded_mode,
             message="Building retrieval index",
         )
+        executive_summary_override, report_agent_meta = (
+            generate_executive_summary_with_llm(
+                session_id,
+                summary,
+                analysis.clusters[: self.settings.report_top_clusters],
+                analysis.alerts,
+                degraded_mode=degraded_mode,
+                diagnostics=analysis.diagnostics,
+                settings=self.settings,
+            )
+        )
+        analysis.diagnostics["report_agent"] = report_agent_meta
         report_markdown, executive_summary = build_report_markdown(
             session_id,
             summary,
@@ -406,6 +520,7 @@ class PFIAService:
             analysis.alerts,
             degraded_mode=degraded_mode,
             diagnostics=analysis.diagnostics,
+            executive_summary_override=executive_summary_override,
         )
         review_payload = []
         for review in reviews:
@@ -515,7 +630,11 @@ class PFIAService:
         }
         started = perf_counter()
         answer = answer_question(
-            self.settings.indexes_dir / f"{session_id}.pkl", session_ready, question
+            self.settings.indexes_dir / f"{session_id}.pkl",
+            session_ready,
+            question,
+            settings=self.settings,
+            chat_history=self.repo.get_recent_chat_turns(session_id, limit=6),
         )
         self.repo.add_chat_turn(session_id, "user", question)
         self.repo.add_chat_turn(session_id, "assistant", answer.answer)

@@ -695,6 +695,21 @@ def _build_alerts(
     return alerts
 
 
+def build_alerts(
+    clusters: list[ClusterRecord], reviews: list[ReviewNormalized]
+) -> list[AlertRecord]:
+    """Public wrapper for alert derivation after cluster post-processing.
+
+    Args:
+        clusters: Current cluster set.
+        reviews: Sanitized reviews aligned with cluster assignments.
+
+    Returns:
+        Alert records derived from weekly cluster activity.
+    """
+    return _build_alerts(clusters, reviews)
+
+
 def _quality_score(embeddings: np.ndarray, labels: np.ndarray) -> float:
     """Compute clustering quality while ignoring noise labels.
 

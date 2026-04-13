@@ -7,10 +7,13 @@
 ## Подмодули
 
 - `embedding-runner`;
+- `preprocess-review-agent`;
 - `clustering-engine`;
+- `cluster-review-agent`;
 - `label-summary-generator`;
 - `priority-scorer`;
 - `anomaly-detector`;
+- `anomaly-explainer-agent`;
 - `report-artifact-builder`.
 
 ## Входной контракт
@@ -75,6 +78,15 @@
   - label на базе top keywords;
   - summary как шаблон из частоты, тональности и источников.
 
+## Hybrid preprocessing review
+
+- Regex и простые эвристики остаются first-pass фильтрами.
+- Если доступен OpenAI runtime, `PreprocessReviewAgent` делает second-pass review для пограничных случаев:
+  - `spam`;
+  - `injection_suspected`;
+  - `low_information`.
+- При недоступности OpenAI базовые heuristic flags сохраняются без hard failure.
+
 ## Scoring
 
 Формула PoC:
@@ -97,6 +109,15 @@ priority_score =
 - Базовое правило: `mean + 2 * std` на rolling window.
 - Если исторических данных нет, модуль возвращает `insufficient_history` вместо hard failure.
 - Severity вычисляется детерминированно на основе величины отклонения.
+- Если доступен OpenAI runtime, `AnomalyExplainerAgent` переписывает детерминированные alert reasons в grounded PM-friendly explanations.
+
+## Cluster review
+
+- Детерминированная кластеризация остаётся базовым источником групп.
+- Если доступен OpenAI runtime, `ClusterReviewAgent` может:
+  - предложить safe merge близких кластеров;
+  - пометить широкие кластеры как кандидаты на split review.
+- Merge/split review не заменяет сам deterministic clustering engine, а дополняет его semantic layer.
 
 ## Report artifact
 

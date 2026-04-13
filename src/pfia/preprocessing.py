@@ -349,6 +349,30 @@ def write_sanitized_jsonl(output_path: Path, reviews: list[ReviewNormalized]) ->
             handle.write("\n")
 
 
+def refresh_summary_flag_counts(
+    summary: PreprocessingSummary, reviews: list[ReviewNormalized]
+) -> PreprocessingSummary:
+    """Recompute summary counters that depend on final review flags.
+
+    Args:
+        summary: Existing preprocessing summary.
+        reviews: Final sanitized reviews after optional LLM review.
+
+    Returns:
+        Updated summary with flag-derived counters refreshed.
+    """
+    return summary.model_copy(
+        update={
+            "injection_hits": sum(
+                1 for review in reviews if "injection_suspected" in review.flags
+            ),
+            "low_information_records": sum(
+                1 for review in reviews if "low_information" in review.flags
+            ),
+        }
+    )
+
+
 def _parse_rating(value: Any) -> int | None:
     """Coerce a rating field into the supported 1-5 range.
 

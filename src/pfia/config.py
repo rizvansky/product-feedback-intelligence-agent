@@ -14,6 +14,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_prefix="PFIA_",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "PFIA"
@@ -44,6 +45,9 @@ class Settings(BaseSettings):
     generation_backend: str = "local"
     llm_primary_model: str = "gpt-4o-mini"
     llm_fallback_model: str = "local-template"
+    openai_timeout_s: float = 30.0
+    openai_max_retries: int = 2
+    llm_max_tool_steps: int = 4
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(
         default="https://api.openai.com/v1", alias="OPENAI_BASE_URL"
@@ -120,6 +124,11 @@ class Settings(BaseSettings):
             self.sanitized_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def openai_generation_enabled(self) -> bool:
+        """Return whether OpenAI-backed agent generation is enabled."""
+        return self.generation_backend == "openai" and bool(self.openai_api_key.strip())
 
 
 @lru_cache(maxsize=1)

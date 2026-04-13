@@ -19,5 +19,11 @@ def demo_file_path() -> Path:
 @pytest.fixture()
 def app(tmp_path: Path):
     """Create an isolated FastAPI app backed by a temporary runtime directory."""
-    settings = Settings(data_dir=tmp_path / "runtime")
+    settings = Settings(
+        data_dir=tmp_path / "runtime",
+        generation_backend="local",
+        embedding_backend="local",
+        openai_api_key="",
+        _env_file=None,
+    )
     return create_app(settings)

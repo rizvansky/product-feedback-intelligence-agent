@@ -52,6 +52,7 @@ class SessionStatus(str, Enum):
 class ToolName(str, Enum):
     """Tool identifiers exposed by the grounded Q&A layer."""
 
+    top_clusters = "top_clusters"
     search_clusters = "search_clusters"
     get_quotes = "get_quotes"
     get_trend = "get_trend"
