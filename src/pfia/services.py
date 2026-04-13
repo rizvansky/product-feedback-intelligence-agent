@@ -19,7 +19,13 @@ from pfia.llm_agents import (
     refine_clusters_with_llm,
 )
 from pfia.metrics import Metrics
-from pfia.models import JobStage, JobStatus, SessionStatus, UploadResponse
+from pfia.models import (
+    JobStage,
+    JobStatus,
+    SessionRuntimeMetadata,
+    SessionStatus,
+    UploadResponse,
+)
 from pfia.preprocessing import (
     preprocess_upload,
     refresh_summary_flag_counts,
@@ -196,13 +202,19 @@ class PFIAService:
                     "FAILED_INPUT", "Uploaded file is missing from storage."
                 )
 
-            reviews, summary = self._run_preprocess(
+            reviews, summary, preprocess_agent_meta = self._run_preprocess(
                 job_id, session.session_id, upload_path
             )
             analysis = self._run_analysis(job_id, session.session_id, reviews, summary)
             degraded_mode = analysis.degraded_mode
             report_path = self._run_reporting(
-                job_id, session.session_id, summary, reviews, analysis, degraded_mode
+                job_id,
+                session,
+                summary,
+                reviews,
+                analysis,
+                degraded_mode,
+                preprocess_agent_meta,
             )
             final_job_status = (
                 JobStatus.degraded_completed if degraded_mode else JobStatus.completed
@@ -281,7 +293,7 @@ class PFIAService:
             upload_path: Path to the raw uploaded file.
 
         Returns:
-            Tuple of sanitized reviews and preprocessing summary.
+            Tuple of sanitized reviews, preprocessing summary, and runtime agent metadata.
         """
         self.repo.set_job_state(
             job_id, stage=JobStage.preprocess, message="Preprocessing reviews"
@@ -326,7 +338,7 @@ class PFIAService:
             "INFO",
             f"Kept {summary.kept_records} of {summary.total_records} reviews after preprocessing.",
         )
-        return reviews, summary
+        return reviews, summary, preprocess_agent_meta
 
     def _run_analysis(
         self, job_id: str, session_id: str, reviews, summary
@@ -475,25 +487,28 @@ class PFIAService:
     def _run_reporting(
         self,
         job_id: str,
-        session_id: str,
+        session,
         summary,
         reviews,
         analysis: AnalysisArtifacts,
         degraded_mode: bool,
+        preprocess_agent_meta: dict[str, Any],
     ) -> Path:
         """Build retrieval artifacts and the final Markdown report.
 
         Args:
             job_id: Owning job identifier.
-            session_id: Owning session identifier.
+            session: Owning session record with the original config snapshot.
             summary: Preprocessing summary used in report rendering.
             reviews: Sanitized reviews with downstream annotations.
             analysis: Analysis outputs used by reporting and retrieval.
             degraded_mode: Whether the run completed in degraded mode.
+            preprocess_agent_meta: Runtime metadata for the preprocessing review agent.
 
         Returns:
             Path to the persisted Markdown report.
         """
+        session_id = session.session_id
         self.repo.set_job_state(
             job_id,
             status=JobStatus.degraded_running if degraded_mode else JobStatus.running,
@@ -513,6 +528,12 @@ class PFIAService:
             )
         )
         analysis.diagnostics["report_agent"] = report_agent_meta
+        runtime_metadata = self._build_runtime_metadata(
+            session,
+            summary,
+            analysis,
+            preprocess_agent_meta=preprocess_agent_meta,
+        )
         report_markdown, executive_summary = build_report_markdown(
             session_id,
             summary,
@@ -521,6 +542,7 @@ class PFIAService:
             degraded_mode=degraded_mode,
             diagnostics=analysis.diagnostics,
             executive_summary_override=executive_summary_override,
+            runtime_metadata=runtime_metadata,
         )
         review_payload = []
         for review in reviews:
@@ -554,6 +576,7 @@ class PFIAService:
             },
             index_path=self.settings.indexes_dir / f"{session_id}.pkl",
         )
+        self.repo.save_runtime_metadata(session_id, runtime_metadata)
         self.repo.log_event(
             job_id,
             session_id,
@@ -590,6 +613,66 @@ class PFIAService:
             "Markdown report written.",
         )
         return report_path
+
+    def _build_runtime_metadata(
+        self,
+        session,
+        summary,
+        analysis: AnalysisArtifacts,
+        *,
+        preprocess_agent_meta: dict[str, Any],
+    ) -> SessionRuntimeMetadata:
+        """Build a compact runtime metadata snapshot for one completed session.
+
+        Args:
+            session: Owning session record with upload config.
+            summary: Final preprocessing summary for the run.
+            analysis: Analysis artifacts with diagnostics populated.
+            preprocess_agent_meta: Runtime metadata for the preprocessing review agent.
+
+        Returns:
+            Structured runtime metadata used by the API and report.
+        """
+        agent_usage = {
+            "preprocess_review_agent": preprocess_agent_meta,
+            "cluster_review_agent": analysis.diagnostics.get(
+                "cluster_review_agent", {}
+            ),
+            "taxonomy_agent": analysis.diagnostics.get("taxonomy_agent", {}),
+            "anomaly_explainer_agent": analysis.diagnostics.get(
+                "anomaly_explainer_agent", {}
+            ),
+            "report_agent": analysis.diagnostics.get("report_agent", {}),
+        }
+        openai_agent_used = any(
+            isinstance(meta, dict)
+            and meta.get("used") is True
+            and meta.get("mode") == "openai"
+            for meta in agent_usage.values()
+        )
+        return SessionRuntimeMetadata(
+            runtime_profile="openai-enhanced" if openai_agent_used else "deterministic",
+            generation_backend_requested=self.settings.generation_backend,
+            generation_backend_effective="openai" if openai_agent_used else "local",
+            embedding_backend=self.settings.embedding_backend,
+            openai_generation_enabled=self.settings.openai_generation_enabled,
+            llm_primary_model=(
+                self.settings.llm_primary_model
+                if self.settings.openai_generation_enabled
+                else None
+            ),
+            input_filename=str(session.config_snapshot.get("filename") or ""),
+            input_content_type=str(session.config_snapshot.get("content_type") or ""),
+            records_total=summary.total_records,
+            records_kept=summary.kept_records,
+            top_cluster_ids=[
+                cluster.cluster_id
+                for cluster in analysis.clusters[: self.settings.report_top_clusters]
+            ],
+            data_dir=str(self.settings.data_dir),
+            embedded_worker=bool(self.settings.embedded_worker),
+            agent_usage=agent_usage,
+        )
 
     def get_session_detail(self, session_id: str) -> dict[str, Any]:
         """Return a session view augmented with ordered stage events.

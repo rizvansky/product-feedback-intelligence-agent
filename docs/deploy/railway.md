@@ -52,7 +52,10 @@
 
 Опционально:
 
+- `PFIA_GENERATION_BACKEND=openai`, если нужен OpenAI-backed runtime
 - `OPENAI_API_KEY`, если позже понадобится реальная внешняя генерация
+- `PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini`
+- `PFIA_LLM_MAX_TOOL_STEPS=4`
 - `OPENAI_BASE_URL`, если будет прокси или совместимый endpoint
 
 Не нужно вручную задавать:
@@ -60,6 +63,34 @@
 - `PFIA_PORT`: Railway сам передаст `PORT`
 - `PFIA_DATA_DIR`: при наличии volume путь будет вычислен автоматически
 - `PFIA_EMBEDDED_WORKER`: при наличии Railway volume режим включится автоматически
+
+## Как Включить OpenAI На Railway
+
+Добавить в Railway service variables:
+
+- `PFIA_GENERATION_BACKEND=openai`
+- `OPENAI_API_KEY=<your_openai_key>`
+- `PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini`
+- `PFIA_LLM_MAX_TOOL_STEPS=4`
+- опционально `PFIA_OPENAI_TIMEOUT_S=30`
+- опционально `PFIA_OPENAI_MAX_RETRIES=2`
+
+После этого сделать `Redeploy`.
+
+Что изменится:
+
+- batch-стадии смогут использовать `PreprocessReviewAgent`, `ClusterReviewAgent`, `TaxonomyAgent`, `AnomalyExplainerAgent`, `ExecutiveSummaryAgent`;
+- Q&A пойдёт через `QueryPlannerAgent` и `AnswerWriterAgent`;
+- при проблемах с OpenAI runtime автоматически вернётся к deterministic fallback path вместо hard failure.
+
+Как проверить, что на Railway реально работает OpenAI:
+
+- выполнить batch-run;
+- открыть `GET /api/sessions/{session_id}`;
+- проверить, что `runtime_metadata.runtime_profile=openai-enhanced`;
+- проверить, что `runtime_metadata.generation_backend_effective=openai`;
+- проверить, что в `runtime_metadata.agent_usage` есть `used=true` и `mode=openai`;
+- проверить, что `POST /api/sessions/{session_id}/chat` возвращает `degraded_mode=false`.
 
 ## Что Проверить После Деплоя
 
@@ -82,7 +113,7 @@
 1. Открыть UI.
 1. Нажать `Run Demo Dataset`.
 1. Дождаться статуса `COMPLETED`.
-1. Проверить, что report и clusters отрисовались.
+1. Проверить, что report, clusters и runtime metadata отрисовались.
 1. В Q&A спросить: `What is the highest-priority issue and what evidence supports it?`
 
 ## Ограничения Текущего Hosted Профиля

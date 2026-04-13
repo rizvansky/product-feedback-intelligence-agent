@@ -133,17 +133,28 @@ function setInlineMessage(message, isError) {
 }
 
 function renderSession(payload) {
-  const { session, job, preprocessing_summary: summary, clusters, alerts, report, events } = payload;
+  const {
+    session,
+    job,
+    preprocessing_summary: summary,
+    clusters,
+    alerts,
+    report,
+    events,
+    runtime_metadata: runtimeMetadata,
+  } = payload;
   const failed = session.status === "FAILED";
   queueState.textContent = job.status;
   sessionStatus.textContent = session.status;
   sessionStatus.className = `badge ${failed ? "status-failed" : session.status.includes("COMPLETED") ? "status-completed" : ""}`;
 
+  const runtimeSummary = renderRuntimeMeta(runtimeMetadata);
   sessionMeta.innerHTML = `
     <div><strong>Session:</strong> <code>${session.session_id}</code></div>
     <div><strong>Job:</strong> <code>${job.job_id}</code></div>
     <div><strong>Current stage:</strong> ${job.stage}</div>
     <div><strong>Failure code:</strong> ${session.failure_code || "n/a"}</div>
+    ${runtimeSummary}
   `;
 
   summaryMetrics.innerHTML = summary
@@ -210,6 +221,24 @@ function renderAnswer(payload) {
         .map((item) => `<span class="chip">${item.tool}: ${item.output_summary}</span>`)
         .join("")}</div>
     </div>
+  `;
+}
+
+function renderRuntimeMeta(runtimeMetadata) {
+  if (!runtimeMetadata) {
+    return "";
+  }
+  const usedAgents = Object.entries(runtimeMetadata.agent_usage || {})
+    .filter(([, meta]) => meta && meta.used)
+    .map(([name, meta]) => `${name} (${meta.mode || "unknown"})`);
+
+  return `
+    <div><strong>Runtime profile:</strong> ${runtimeMetadata.runtime_profile}</div>
+    <div><strong>Generation backend:</strong> ${runtimeMetadata.generation_backend_effective} (requested: ${runtimeMetadata.generation_backend_requested})</div>
+    <div><strong>Primary model:</strong> ${runtimeMetadata.llm_primary_model || "n/a"}</div>
+    <div><strong>Input file:</strong> <code>${runtimeMetadata.input_filename || "n/a"}</code></div>
+    <div><strong>Run shape:</strong> ${runtimeMetadata.records_kept}/${runtimeMetadata.records_total} kept, ${runtimeMetadata.top_cluster_ids.length} top clusters</div>
+    <div><strong>Agents used:</strong> ${usedAgents.length ? usedAgents.join(", ") : "deterministic-only path"}</div>
   `;
 }
 

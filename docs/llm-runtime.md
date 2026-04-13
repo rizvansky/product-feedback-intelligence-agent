@@ -77,3 +77,17 @@ The design goal is:
 - stable PoC behavior when OpenAI is unavailable.
 
 That is why PFIA is built as `LLM-enhanced`, not `LLM-dependent`.
+
+## Runtime Visibility
+
+PFIA surfaces the effective runtime path in two places:
+
+- `GET /api/sessions/{session_id}` returns `runtime_metadata`;
+- the generated Markdown report includes a `Runtime Metadata` section.
+
+This metadata is meant to answer operational questions such as:
+
+- whether the run was `deterministic` or `openai-enhanced`;
+- which generation backend was requested vs actually used;
+- which input file was processed;
+- which specialized agents ran in `openai` mode vs local fallback.

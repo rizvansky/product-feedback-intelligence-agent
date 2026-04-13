@@ -45,7 +45,18 @@ def test_smoke_batch_flow(app, demo_file_path):
         assert session_payload["session"]["status"] == "COMPLETED"
         assert session_payload["job"]["status"] == "COMPLETED"
         assert session_payload["report"]["markdown"].startswith("# PFIA Report")
+        assert "## Runtime Metadata" in session_payload["report"]["markdown"]
         assert len(session_payload["clusters"]) >= 5
+        assert session_payload["runtime_metadata"]["runtime_profile"] == "deterministic"
+        assert (
+            session_payload["runtime_metadata"]["generation_backend_effective"]
+            == "local"
+        )
+        assert (
+            session_payload["runtime_metadata"]["input_filename"]
+            == "mobile_app_reviews.csv"
+        )
+        assert "taxonomy_agent" in session_payload["runtime_metadata"]["agent_usage"]
 
 
 def test_privacy_masking_in_sanitized_artifacts_and_report(app, demo_file_path):

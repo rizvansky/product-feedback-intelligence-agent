@@ -1,5 +1,7 @@
 # Product Proposal
 
+> Примечание по текущему репозиторию: этот документ описывает исходный proposal и более широкий target design. Фактическая PoC-реализация в коде сейчас проще: FastAPI + static UI вместо Next.js, persisted on-disk retrieval index вместо отдельного Chroma service, OpenAI-backed multi-agent слой без LangGraph runtime и без Anthropic fallback. Для текущего runtime ориентироваться на `README`, `docs/llm-runtime.md` и `docs/testing-playbook.md`.
+
 ______________________________________________________________________
 
 ## 1. Обоснование идеи

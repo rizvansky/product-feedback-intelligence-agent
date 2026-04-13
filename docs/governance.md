@@ -1,5 +1,7 @@
 # Governance
 
+> Примечание по текущему репозиторию: этот документ сочетает target-policy и текущие PoC-требования. В текущей реализации raw uploads кратковременно сохраняются на локальном runtime-диске для batch processing, но в LLM path передаются только sanitized texts. Реальный runtime today не использует Anthropic fallback и LangSmith sink; operational truth зафиксирован в `README`, `docs/llm-runtime.md` и `docs/testing-playbook.md`.
+
 ______________________________________________________________________
 
 ## 1. Risk Register

@@ -224,6 +224,25 @@ class SessionRecord(BaseModel):
     executive_summary: str | None = None
 
 
+class SessionRuntimeMetadata(BaseModel):
+    """Operational metadata recorded for one completed processing run."""
+
+    runtime_profile: str
+    generation_backend_requested: str
+    generation_backend_effective: str
+    embedding_backend: str
+    openai_generation_enabled: bool
+    llm_primary_model: str | None = None
+    input_filename: str | None = None
+    input_content_type: str | None = None
+    records_total: int
+    records_kept: int
+    top_cluster_ids: list[str] = Field(default_factory=list)
+    data_dir: str
+    embedded_worker: bool
+    agent_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+
 class SessionDetail(BaseModel):
     """Compound session view returned by the API and repository."""
 
@@ -233,6 +252,7 @@ class SessionDetail(BaseModel):
     clusters: list[ClusterRecord] = Field(default_factory=list)
     alerts: list[AlertRecord] = Field(default_factory=list)
     report: ReportArtifact | None = None
+    runtime_metadata: SessionRuntimeMetadata | None = None
 
 
 class UploadResponse(BaseModel):

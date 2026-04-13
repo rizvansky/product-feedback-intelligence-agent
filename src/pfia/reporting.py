@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pfia.models import AlertRecord, ClusterRecord, PreprocessingSummary, ReportArtifact
+from pfia.models import (
+    AlertRecord,
+    ClusterRecord,
+    PreprocessingSummary,
+    ReportArtifact,
+    SessionRuntimeMetadata,
+)
 from pfia.utils import ensure_parent
 
 
@@ -16,6 +22,7 @@ def build_report_markdown(
     degraded_mode: bool,
     diagnostics: dict[str, object],
     executive_summary_override: str | None = None,
+    runtime_metadata: SessionRuntimeMetadata | None = None,
 ) -> tuple[str, str]:
     """Build the Markdown report and executive summary for a session.
 
@@ -27,6 +34,7 @@ def build_report_markdown(
         degraded_mode: Whether the run completed in degraded mode.
         diagnostics: Supplemental runtime diagnostics to surface in the report.
         executive_summary_override: Optional precomputed summary from an LLM agent.
+        runtime_metadata: Optional runtime metadata snapshot for this session.
 
     Returns:
         Tuple of ``(markdown_report, executive_summary)``.
@@ -119,6 +127,8 @@ def build_report_markdown(
             "",
         ]
     )
+    if runtime_metadata is not None:
+        lines.extend(_render_runtime_metadata(runtime_metadata))
     return "\n".join(lines).strip() + "\n", executive_summary
 
 
@@ -181,3 +191,38 @@ def _build_executive_summary(
         f"The batch is dominated by {themes}. "
         f"Detected anomaly spikes: {alerts_count}.{degraded_note}"
     )
+
+
+def _render_runtime_metadata(runtime_metadata: SessionRuntimeMetadata) -> list[str]:
+    """Render the runtime metadata appendix for the Markdown report.
+
+    Args:
+        runtime_metadata: Persisted metadata for the completed run.
+
+    Returns:
+        Markdown lines describing the effective runtime profile.
+    """
+    lines = [
+        "## Runtime Metadata",
+        "",
+        f"- Runtime profile: `{runtime_metadata.runtime_profile}`",
+        f"- Requested generation backend: `{runtime_metadata.generation_backend_requested}`",
+        f"- Effective generation backend: `{runtime_metadata.generation_backend_effective}`",
+        f"- Embedding backend: `{runtime_metadata.embedding_backend}`",
+        f"- OpenAI generation enabled: {'yes' if runtime_metadata.openai_generation_enabled else 'no'}",
+        f"- Primary LLM model: `{runtime_metadata.llm_primary_model or 'n/a'}`",
+        f"- Input filename: `{runtime_metadata.input_filename or 'n/a'}`",
+        f"- Input content type: `{runtime_metadata.input_content_type or 'n/a'}`",
+        f"- Records kept: `{runtime_metadata.records_kept}` of `{runtime_metadata.records_total}`",
+        f"- Top cluster ids: {', '.join(f'`{cluster_id}`' for cluster_id in runtime_metadata.top_cluster_ids) or 'n/a'}",
+        f"- Data dir: `{runtime_metadata.data_dir}`",
+        f"- Embedded worker: {'yes' if runtime_metadata.embedded_worker else 'no'}",
+        "- Agent usage:",
+    ]
+    for agent_name, meta in runtime_metadata.agent_usage.items():
+        mode = str(meta.get("mode", "unknown"))
+        used = "yes" if meta.get("used") else "no"
+        model = str(meta.get("model") or "n/a")
+        lines.append(f"  - `{agent_name}` -> used={used}, mode={mode}, model={model}")
+    lines.extend([""])
+    return lines

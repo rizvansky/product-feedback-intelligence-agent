@@ -56,6 +56,12 @@ PFIA - это PoC-система для пакетного анализа пол
   - `get_trend`;
   - `compare_clusters`;
   - `get_report_section`.
+- Runtime metadata для каждого completed run:
+  - effective backend;
+  - input filename;
+  - records kept;
+  - top cluster ids;
+  - per-agent usage snapshot.
 - Health endpoints, Prometheus-compatible `/metrics`, Docker Compose, demo dataset и тесты.
 - Hosted deploy profile под Railway: single-service режим с embedded worker и persistent volume.
 
@@ -177,6 +183,14 @@ PFIA_LLM_MAX_TOOL_STEPS=4
 - Q&A выполняется через `QueryPlannerAgent` и `AnswerWriterAgent`, которые оркестрируют retrieval tools;
 - при проблемах с OpenAI система откатывается на локальный deterministic fallback вместо hard failure.
 
+Как убедиться, что сработал именно OpenAI path, а не fallback:
+
+- в UI и `GET /api/sessions/{session_id}` появляется `runtime_metadata`;
+- `runtime_profile` должен быть `openai-enhanced`;
+- `generation_backend_effective` должен быть `openai`;
+- в `agent_usage` хотя бы часть batch-агентов должна иметь `used=true` и `mode=openai`;
+- в ответе `POST /api/sessions/{session_id}/chat` поле `degraded_mode` должно быть `false`.
+
 Почему архитектура сделана именно так:
 
 - deterministic core оставлен для parsing, privacy, dedupe, clustering, scoring, anomaly detection и state machine;
@@ -184,6 +198,70 @@ PFIA_LLM_MAX_TOOL_STEPS=4
 - fallback обязателен, потому что PoC не должен зависеть от внешнего API как от единственной точки отказа.
 
 Подробное обоснование вынесено в [docs/llm-runtime.md](docs/llm-runtime.md).
+
+## Произвольный Прогон
+
+Проект не завязан на встроенный demo dataset. Через UI и API можно загрузить произвольный CSV/JSON.
+
+Минимальный входной контракт:
+
+- обязательные поля:
+  - `review_id`
+  - `source`
+  - `text`
+  - `created_at`
+- опциональные поля:
+  - `rating`
+  - `language`
+  - `app_version`
+- поддерживаемые `source`:
+  - `app_store`
+  - `google_play`
+  - `zendesk`
+  - `telegram`
+  - `nps`
+  - `email`
+  - `web`
+
+Пример произвольного CSV:
+
+```csv
+review_id,source,text,created_at,rating,language,app_version
+demo_001,app_store,"Checkout crashes after I tap Pay",2026-04-12T09:00:00Z,1,en,5.5.1
+demo_002,google_play,"Не приходит код входа уже 10 минут",2026-04-12T10:30:00Z,1,ru,5.5.1
+demo_003,web,"The new onboarding flow feels much cleaner",2026-04-12T12:10:00Z,5,en,5.5.1
+```
+
+Пример произвольного JSON:
+
+```json
+[
+  {
+    "review_id": "demo_001",
+    "source": "app_store",
+    "text": "Checkout crashes after I tap Pay",
+    "created_at": "2026-04-12T09:00:00Z",
+    "rating": 1,
+    "language": "en",
+    "app_version": "5.5.1"
+  }
+]
+```
+
+Для воспроизводимого произвольного smoke-run есть параметризуемый скрипт:
+
+```bash
+python check.py --file path/to/reviews.csv --question "Which topic is spiking this week?"
+```
+
+Скрипт:
+
+- загружает указанный файл;
+- ждёт завершения batch-job;
+- печатает `runtime_profile`, `generation_backend_effective`, `input_filename`, `top_cluster_ids`;
+- задаёт произвольный grounded question после завершения обработки.
+
+Если взять другой файл, другие размеры батча и другой вопрос, ответы и runtime metadata будут другими. Это самый простой способ показать, что демо не hardcoded.
 
 ## Демонстрационный Сценарий
 
@@ -220,6 +298,7 @@ PFIA_LLM_MAX_TOOL_STEPS=4
 
 - `POST /api/sessions/upload` - принять CSV/JSON и создать `session` + `job`
 - `GET /api/sessions/{session_id}` - статус, clusters, alerts, report, event timeline
+- `GET /api/sessions/{session_id}` также возвращает `runtime_metadata` с effective backend и agent usage
 - `GET /api/sessions/{session_id}/report` - report artifact
 - `POST /api/sessions/{session_id}/chat` - grounded Q&A
 - `GET /api/demo/sample-file` - скачать demo CSV
@@ -263,6 +342,13 @@ PFIA_LLM_MAX_TOOL_STEPS=4
 - privacy masking
 - recovery после рестарта worker
 - grounded priority Q&A
+- session runtime metadata
+- OpenAI-backed helper agents
+- planner/writer Q&A path
+- normalization structured writer output
+- LLM preprocessing review
+- LLM cluster review
+- LLM anomaly explainer
 
 ## Подготовка К Будущему Деплою
 
@@ -298,7 +384,7 @@ PFIA_LLM_MAX_TOOL_STEPS=4
 
 1. Создать Railway project из этого репозитория.
 1. Подключить один volume и смонтировать его в `/data`.
-1. Опционально добавить `OPENAI_API_KEY`, если захочется расширить PoC внешней генерацией.
+1. При необходимости включить OpenAI runtime через Railway Variables.
 1. Сгенерировать public domain.
 
 Подробный runbook лежит в [docs/deploy/railway.md](docs/deploy/railway.md).
@@ -314,5 +400,7 @@ PFIA_LLM_MAX_TOOL_STEPS=4
 - [Architecture Diagrams](docs/diagrams/README.md)
 - [Railway Deploy Runbook](docs/deploy/railway.md)
 - [Async Review Guide](docs/review-guide.md)
+- [Testing Playbook](docs/testing-playbook.md)
+- [LLM Runtime Strategy](docs/llm-runtime.md)
 
-Важно: часть документов описывает более широкий target design, чем текущая PoC-реализация. Для сдачи ориентироваться стоит прежде всего на этот `README` и фактический код в репозитории.
+Важно: часть документов описывает более широкий target design, чем текущая PoC-реализация. Для сдачи и деплоя ориентироваться стоит прежде всего на этот `README`, [docs/testing-playbook.md](docs/testing-playbook.md), [docs/llm-runtime.md](docs/llm-runtime.md) и фактический код в репозитории.

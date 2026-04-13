@@ -14,3 +14,4 @@
 Отдельно для hosted rollout:
 
 - [Railway Deploy Runbook](../deploy/railway.md)
+- [Testing Playbook](../testing-playbook.md)

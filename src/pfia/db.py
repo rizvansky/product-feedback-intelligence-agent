@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS preprocessing_summaries (
     payload_json TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS session_runtime_metadata (
+    session_id TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,

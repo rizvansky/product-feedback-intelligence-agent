@@ -17,6 +17,7 @@ from pfia.models import (
     ReportArtifact,
     ReviewNormalized,
     SessionDetail,
+    SessionRuntimeMetadata,
     SessionRecord,
     SessionStatus,
 )
@@ -265,6 +266,19 @@ class Repository:
             (session_id, summary.model_dump_json()),
         )
 
+    def save_runtime_metadata(
+        self, session_id: str, metadata: SessionRuntimeMetadata
+    ) -> None:
+        """Upsert runtime metadata collected for a completed session."""
+        self.db.execute(
+            """
+            INSERT INTO session_runtime_metadata (session_id, payload_json)
+            VALUES (?, ?)
+            ON CONFLICT(session_id) DO UPDATE SET payload_json = excluded.payload_json
+            """,
+            (session_id, metadata.model_dump_json()),
+        )
+
     def replace_reviews(self, session_id: str, reviews: list[ReviewNormalized]) -> None:
         """Replace the persisted sanitized reviews for a session."""
         with self.db.connection() as connection:
@@ -504,6 +518,16 @@ class Repository:
             for row in rows
         ]
 
+    def get_runtime_metadata(self, session_id: str) -> SessionRuntimeMetadata | None:
+        """Fetch persisted runtime metadata for a session, if present."""
+        row = self.db.fetchone(
+            "SELECT payload_json FROM session_runtime_metadata WHERE session_id = ?",
+            (session_id,),
+        )
+        if row is None:
+            return None
+        return SessionRuntimeMetadata.model_validate_json(row["payload_json"])
+
     def get_quotes_for_cluster(
         self, session_id: str, cluster_id: str, limit: int = 3
     ) -> list[QuoteRecord]:
@@ -635,6 +659,7 @@ class Repository:
             clusters=self.get_clusters(session_id),
             alerts=self.get_alerts(session_id),
             report=self.get_report(session_id),
+            runtime_metadata=self.get_runtime_metadata(session_id),
         )
 
     def list_recovery_jobs(self) -> list[JobRecord]:

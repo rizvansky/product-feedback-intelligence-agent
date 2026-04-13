@@ -1,5 +1,7 @@
 # Retriever
 
+> Примечание по текущему runtime: в коде репозитория retriever реализован как persisted on-disk session index с TF-IDF + cosine similarity + keyword overlap. Этот spec сохраняет target vocabulary (`reviews_vector`, `clusters_vector`, `Chroma`) как более широкий design-level reference, но фактический PoC сейчас не поднимает отдельный Chroma service.
+
 ## Назначение
 
 Retriever обслуживает Q&A поверх уже построенных артефактов сессии и отвечает за стабильное получение grounded evidence даже при деградации части индексов.

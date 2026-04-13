@@ -30,6 +30,7 @@
    - clusters;
    - Markdown report;
    - timeline событий.
+   - runtime metadata.
 1. В блоке Q&A задать вопрос:
    - `What is the highest-priority issue and what evidence supports it?`
 
@@ -42,6 +43,13 @@
 - `8` кластеров;
 - top issue: `Payment flow crashes`;
 - grounded answer с evidence и cluster ids.
+
+Дополнительно после завершения batch-run в UI и `GET /api/sessions/{session_id}` видны:
+
+- `runtime_profile`
+- effective generation backend
+- input filename
+- per-agent usage snapshot
 
 ## Health Endpoints
 
@@ -70,6 +78,24 @@
 - `18` из `app_store`, `18` из `google_play`;
 - русский и английский языки;
 - период с `2026-03-17` по `2026-04-12`.
+
+## Arbitrary Run
+
+Чтобы показать, что проект не hardcoded под встроенный demo dataset, можно сделать второй прогон:
+
+1. Подготовить свой CSV или JSON с полями `review_id`, `source`, `text`, `created_at`.
+1. Загрузить его через UI или `POST /api/sessions/upload`.
+1. Дождаться завершения batch-job.
+1. Проверить, что:
+   - `runtime_metadata.input_filename` совпадает с именем загруженного файла;
+   - `records_total` и `records_kept` отличаются от demo batch, если файл другой;
+   - `top_cluster_ids`, report и Q&A меняются вместе с содержимым входного файла.
+
+Для CLI smoke-run можно использовать:
+
+```bash
+python check.py --file path/to/your_reviews.csv --question "Which topic is spiking this week?"
+```
 
 ## Suggested Submission Text
 
