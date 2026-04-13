@@ -26,12 +26,21 @@ logger = logging.getLogger("pfia.api")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Args:
+        settings: Optional explicit settings instance for tests or custom bootstraps.
+
+    Returns:
+        Configured FastAPI application.
+    """
     resolved_settings = settings or get_settings()
     context = build_app_context(resolved_settings)
     service = PFIAService(context)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        """Manage the optional embedded worker lifecycle for hosted deployments."""
         worker_thread: Thread | None = None
         stop_event: Event | None = None
 
@@ -69,6 +78,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.exception_handler(PFIAError)
     async def pfia_error_handler(_: Request, exc: PFIAError):
+        """Translate structured PFIA exceptions into JSON API responses."""
         return JSONResponse(
             status_code=exc.status_code,
             content={"error": exc.code, "message": exc.message},
@@ -76,10 +86,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health/live")
     async def live() -> dict[str, str]:
+        """Return a liveness probe response."""
         return {"status": "ok"}
 
     @app.get("/health/ready")
     async def ready() -> JSONResponse:
+        """Return a readiness probe response."""
         readiness = service.readiness()
         return JSONResponse(
             status_code=200 if readiness["ready"] else 503, content=readiness
@@ -87,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/metrics")
     async def metrics() -> PlainTextResponse:
+        """Expose Prometheus-compatible metrics."""
         return PlainTextResponse(
             context.metrics.render().decode("utf-8"),
             media_type="text/plain; version=0.0.4",
@@ -94,10 +107,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
+        """Serve the built-in static frontend."""
         return HTMLResponse((static_dir / "index.html").read_text(encoding="utf-8"))
 
     @app.get("/api/demo/sample-file")
     async def demo_sample() -> FileResponse:
+        """Serve the baked-in demo dataset."""
         demo_path = Path("data/demo/mobile_app_reviews.csv")
         if not demo_path.exists():
             raise HTTPException(status_code=404, detail="Demo sample is missing.")
@@ -105,6 +120,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/sessions/upload")
     async def upload(file: UploadFile = File(...)):
+        """Upload a review file and enqueue a processing job."""
         payload = await file.read()
         return service.upload_file(
             file.filename or "reviews.csv", payload, file.content_type
@@ -112,10 +128,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/sessions/{session_id}")
     async def get_session(session_id: str):
+        """Return the current state and artifacts for a session."""
         return service.get_session_detail(session_id)
 
     @app.get("/api/sessions/{session_id}/report")
     async def get_report(session_id: str):
+        """Return the rendered report for a completed session."""
         detail = service.get_session_detail(session_id)
         report = detail.get("report")
         if report is None:
@@ -124,6 +142,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/sessions/{session_id}/chat")
     async def chat(session_id: str, payload: dict[str, str]):
+        """Answer a grounded question for a completed session."""
         question = (payload.get("question") or "").strip()
         if len(question) < 3:
             raise HTTPException(
@@ -135,6 +154,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def main() -> None:
+    """CLI entrypoint for the PFIA API server."""
     parser = argparse.ArgumentParser(description="Run PFIA API.")
     parser.add_argument("--host", default=None)
     parser.add_argument("--port", type=int, default=None)

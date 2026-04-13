@@ -16,6 +16,19 @@ def build_report_markdown(
     degraded_mode: bool,
     diagnostics: dict[str, object],
 ) -> tuple[str, str]:
+    """Build the Markdown report and executive summary for a session.
+
+    Args:
+        session_id: Session identifier shown in the report header.
+        preprocessing_summary: Aggregate counters from preprocessing.
+        clusters: Ranked clusters to include in the report body.
+        alerts: Generated anomaly alerts.
+        degraded_mode: Whether the run completed in degraded mode.
+        diagnostics: Supplemental runtime diagnostics to surface in the report.
+
+    Returns:
+        Tuple of ``(markdown_report, executive_summary)``.
+    """
     executive_summary = _build_executive_summary(clusters, alerts, degraded_mode)
     lines = [
         f"# PFIA Report for {session_id}",
@@ -112,6 +125,18 @@ def write_report(
     executive_summary: str,
     degraded_mode: bool,
 ) -> ReportArtifact:
+    """Persist a Markdown report and return its metadata model.
+
+    Args:
+        report_path: Output file path.
+        markdown: Rendered Markdown content.
+        session_id: Owning session identifier.
+        executive_summary: Short summary already generated for the report.
+        degraded_mode: Whether the producing run completed in degraded mode.
+
+    Returns:
+        Report artifact metadata with embedded Markdown content.
+    """
     ensure_parent(report_path)
     report_path.write_text(markdown, encoding="utf-8")
     generated_at = datetime.now(timezone.utc)
@@ -129,6 +154,16 @@ def write_report(
 def _build_executive_summary(
     clusters: list[ClusterRecord], alerts: list[AlertRecord], degraded_mode: bool
 ) -> str:
+    """Summarize the most important findings in one paragraph.
+
+    Args:
+        clusters: Ranked clusters included in the report.
+        alerts: Generated anomaly alerts.
+        degraded_mode: Whether the run completed in degraded mode.
+
+    Returns:
+        Human-readable executive summary text.
+    """
     if not clusters:
         return "No themes were extracted from the uploaded batch."
     top = clusters[:3]

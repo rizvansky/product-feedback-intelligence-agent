@@ -11,6 +11,7 @@ from pfia.services import PFIAService
 
 
 def test_smoke_batch_flow(app, demo_file_path):
+    """Verify that an uploaded batch completes end-to-end successfully."""
     with TestClient(app) as client:
         with demo_file_path.open("rb") as handle:
             response = client.post(
@@ -33,6 +34,7 @@ def test_smoke_batch_flow(app, demo_file_path):
 
 
 def test_privacy_masking_in_sanitized_artifacts_and_report(app, demo_file_path):
+    """Verify that PII is masked in persisted artifacts and reports."""
     service: PFIAService = app.state.service
     upload = service.upload_file(
         "mobile_app_reviews.csv", demo_file_path.read_bytes(), "text/csv"
@@ -54,6 +56,7 @@ def test_privacy_masking_in_sanitized_artifacts_and_report(app, demo_file_path):
 
 
 def test_recovery_requeues_running_job(app, demo_file_path):
+    """Verify that recovery moves interrupted jobs back into the queue."""
     service: PFIAService = app.state.service
     upload = service.upload_file(
         "mobile_app_reviews.csv", demo_file_path.read_bytes(), "text/csv"
@@ -78,6 +81,7 @@ def test_recovery_requeues_running_job(app, demo_file_path):
 
 
 def test_priority_question_returns_grounded_top_issue(app, demo_file_path):
+    """Verify that priority Q&A selects the top grounded issue."""
     service: PFIAService = app.state.service
     upload = service.upload_file(
         "mobile_app_reviews.csv", demo_file_path.read_bytes(), "text/csv"
@@ -98,6 +102,7 @@ def test_priority_question_returns_grounded_top_issue(app, demo_file_path):
 
 
 def test_railway_hosting_defaults(monkeypatch):
+    """Verify that Railway-specific environment defaults are applied."""
     monkeypatch.setenv("PORT", "9001")
     monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", "/data")
 
@@ -109,6 +114,7 @@ def test_railway_hosting_defaults(monkeypatch):
 
 
 def test_embedded_worker_readiness_uses_background_heartbeat(tmp_path):
+    """Verify that embedded worker mode satisfies the readiness probe."""
     settings = Settings(
         data_dir=tmp_path / "runtime", embedded_worker=True, worker_poll_interval_s=0.05
     )

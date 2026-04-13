@@ -10,7 +10,10 @@ from prometheus_client import (
 
 
 class Metrics:
+    """Owns the in-process Prometheus registry for PFIA."""
+
     def __init__(self) -> None:
+        """Initialize counters, gauges, and histograms used by the PoC."""
         self.registry = CollectorRegistry()
         self.job_total = Counter(
             "pfia_job_total",
@@ -64,4 +67,9 @@ class Metrics:
         )
 
     def render(self) -> bytes:
+        """Render the registry in Prometheus text exposition format.
+
+        Returns:
+            Serialized metrics payload ready for the HTTP response body.
+        """
         return generate_latest(self.registry)

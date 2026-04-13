@@ -213,6 +213,8 @@ CONCEPT_DEFINITIONS = {
 
 @dataclass
 class AnalysisArtifacts:
+    """Bundle of outputs produced by the local analysis pipeline."""
+
     clusters: list[ClusterRecord]
     alerts: list[AlertRecord]
     sentiment_by_review: dict[str, float]
@@ -224,6 +226,16 @@ class AnalysisArtifacts:
 def analyze_reviews(
     session_id: str, reviews: list[ReviewNormalized], settings: Settings
 ) -> AnalysisArtifacts:
+    """Run clustering, scoring, and alert generation for sanitized reviews.
+
+    Args:
+        session_id: Owning session identifier.
+        reviews: Sanitized review records.
+        settings: Runtime settings controlling clustering behavior.
+
+    Returns:
+        Analysis artifact bundle used by reporting and retrieval.
+    """
     concepts_by_review = {
         review.review_id: detect_concepts(review.text_anonymized) for review in reviews
     }
@@ -285,6 +297,14 @@ def analyze_reviews(
 
 
 def compute_sentiment(text: str) -> float:
+    """Estimate sentiment on a simple bounded scale using lexical heuristics.
+
+    Args:
+        text: Review text.
+
+    Returns:
+        Sentiment score in the ``[-1.0, 1.0]`` range.
+    """
     tokens = tokenize(text)
     if not tokens:
         return 0.0
@@ -295,6 +315,15 @@ def compute_sentiment(text: str) -> float:
 
 
 def _cluster_texts(texts: list[str], settings: Settings) -> tuple[np.ndarray, float]:
+    """Cluster texts with HDBSCAN when available and a deterministic fallback.
+
+    Args:
+        texts: Enriched review texts.
+        settings: Runtime clustering configuration.
+
+    Returns:
+        Tuple of ``(labels, quality_score)``.
+    """
     word_vectorizer = TfidfVectorizer(
         lowercase=True,
         analyzer="word",
@@ -349,6 +378,15 @@ def _cluster_texts(texts: list[str], settings: Settings) -> tuple[np.ndarray, fl
 def _group_labels(
     reviews: list[ReviewNormalized], labels: np.ndarray
 ) -> tuple[dict[str, str], dict[str, list[ReviewNormalized]]]:
+    """Map raw cluster labels to stable temporary cluster keys.
+
+    Args:
+        reviews: Reviews aligned with the label array.
+        labels: Raw clustering labels.
+
+    Returns:
+        Mapping from review id to temporary cluster id, plus grouped reviews.
+    """
     cluster_by_review: dict[str, str] = {}
     grouped: dict[str, list[ReviewNormalized]] = {}
     for index, review in enumerate(reviews):
@@ -368,6 +406,21 @@ def _build_clusters(
     degraded_mode: bool,
     top_n: int,
 ) -> tuple[list[ClusterRecord], dict[str, str]]:
+    """Build ranked cluster records from grouped reviews.
+
+    Args:
+        session_id: Owning session identifier.
+        reviews: Full review set for the batch.
+        grouped: Reviews grouped by temporary cluster id.
+        sentiment_by_review: Precomputed sentiment scores.
+        concepts_by_review: Concept tags per review.
+        degraded_mode: Whether the run is already considered degraded.
+        top_n: Reserved for future result limiting.
+
+    Returns:
+        Final cluster records and mapping from temporary to final cluster ids.
+    """
+    _ = session_id, top_n
     total_reviews = len(reviews)
     all_sizes = [len(items) for items in grouped.values()]
     max_cluster_size = max(all_sizes) if all_sizes else 1
@@ -453,6 +506,14 @@ def _build_clusters(
 
 
 def _extract_keywords(texts: list[str]) -> list[str]:
+    """Extract representative keywords for a cluster.
+
+    Args:
+        texts: Cluster texts.
+
+    Returns:
+        Ranked keyword list.
+    """
     if not texts:
         return []
     vectorizer = TfidfVectorizer(
@@ -481,6 +542,16 @@ def _select_top_quote_ids(
     sentiment_by_review: dict[str, float],
     limit: int = 3,
 ) -> list[str]:
+    """Choose the most representative review ids for quoting.
+
+    Args:
+        cluster_reviews: Reviews assigned to a cluster.
+        sentiment_by_review: Precomputed sentiment score by review id.
+        limit: Maximum number of quote ids to return.
+
+    Returns:
+        Ranked review ids for quoting.
+    """
     ranked = sorted(
         cluster_reviews,
         key=lambda review: (
@@ -500,6 +571,19 @@ def _build_cluster_summary(
     trend_delta: float,
     sources: list[str],
 ) -> str:
+    """Render a short natural-language summary for one cluster.
+
+    Args:
+        label: Human-readable cluster label.
+        cluster_reviews: Reviews assigned to the cluster.
+        total_reviews: Total review count in the batch.
+        sentiment: Mean sentiment score for the cluster.
+        trend_delta: Relative week-over-week delta.
+        sources: Distinct review sources represented in the cluster.
+
+    Returns:
+        Human-readable summary sentence.
+    """
     share = (len(cluster_reviews) / max(1, total_reviews)) * 100
     mood = (
         "negative" if sentiment < -0.08 else "positive" if sentiment > 0.08 else "mixed"
@@ -513,6 +597,14 @@ def _build_cluster_summary(
 
 
 def _compute_trend_delta(cluster_reviews: list[ReviewNormalized]) -> float:
+    """Estimate latest-week trend change relative to prior history.
+
+    Args:
+        cluster_reviews: Reviews assigned to a cluster.
+
+    Returns:
+        Relative trend delta, where positive values imply growth.
+    """
     weekly_counts: dict[str, int] = {}
     for review in cluster_reviews:
         week_key = review.created_at.astimezone(timezone.utc).strftime("%Y-W%W")
@@ -526,6 +618,14 @@ def _compute_trend_delta(cluster_reviews: list[ReviewNormalized]) -> float:
 
 
 def _confidence_for_cluster(cluster_reviews: list[ReviewNormalized]) -> str:
+    """Assign a coarse confidence band based on cluster size.
+
+    Args:
+        cluster_reviews: Reviews assigned to the cluster.
+
+    Returns:
+        Confidence label.
+    """
     size = len(cluster_reviews)
     if size >= 8:
         return "high"
@@ -537,6 +637,15 @@ def _confidence_for_cluster(cluster_reviews: list[ReviewNormalized]) -> str:
 def _build_alerts(
     clusters: list[ClusterRecord], reviews: list[ReviewNormalized]
 ) -> list[AlertRecord]:
+    """Generate anomaly alerts from weekly cluster activity.
+
+    Args:
+        clusters: Ranked cluster records.
+        reviews: Full review set for the batch.
+
+    Returns:
+        Informational and spike alerts derived from the batch history.
+    """
     review_lookup = {review.review_id: review for review in reviews}
     alerts: list[AlertRecord] = []
     for cluster in clusters:
@@ -587,6 +696,15 @@ def _build_alerts(
 
 
 def _quality_score(embeddings: np.ndarray, labels: np.ndarray) -> float:
+    """Compute clustering quality while ignoring noise labels.
+
+    Args:
+        embeddings: Reduced embedding vectors.
+        labels: Cluster labels aligned with the embeddings.
+
+    Returns:
+        Silhouette score or ``0.0`` when it cannot be computed.
+    """
     usable_labels = labels[labels != -1]
     usable_embeddings = embeddings[labels != -1]
     if len(usable_labels) < 3 or len(set(usable_labels)) < 2:
@@ -598,6 +716,14 @@ def _quality_score(embeddings: np.ndarray, labels: np.ndarray) -> float:
 
 
 def _agglomerative_profile(embeddings: np.ndarray) -> tuple[np.ndarray, float]:
+    """Evaluate an agglomerative fallback clustering profile.
+
+    Args:
+        embeddings: Reduced embedding vectors.
+
+    Returns:
+        Tuple of ``(best_labels, best_quality_score)``.
+    """
     n_samples = len(embeddings)
     best_quality = 0.0
     best_labels = np.zeros(n_samples, dtype=int)
@@ -615,6 +741,14 @@ def _agglomerative_profile(embeddings: np.ndarray) -> tuple[np.ndarray, float]:
 
 
 def detect_concepts(text: str) -> list[str]:
+    """Detect predefined concept tags inside review text.
+
+    Args:
+        text: Review text.
+
+    Returns:
+        Matching concept identifiers.
+    """
     normalized = normalize_text(text).lower()
     concepts: list[str] = []
     for concept, definition in CONCEPT_DEFINITIONS.items():
@@ -626,6 +760,15 @@ def detect_concepts(text: str) -> list[str]:
 
 
 def enriched_text(text: str, concepts: list[str]) -> str:
+    """Boost clusterability by appending repeated concept markers.
+
+    Args:
+        text: Original review text.
+        concepts: Detected concept identifiers.
+
+    Returns:
+        Text optionally enriched with synthetic concept tokens.
+    """
     if not concepts:
         return text
     markers = " ".join(f"concept_{concept}" for concept in concepts for _ in range(3))
@@ -633,6 +776,14 @@ def enriched_text(text: str, concepts: list[str]) -> str:
 
 
 def _concept_label(concepts: list[str]) -> str | None:
+    """Convert dominant concept tags into a human-readable label.
+
+    Args:
+        concepts: Collected concept identifiers inside a cluster.
+
+    Returns:
+        Preferred label or ``None`` when no concept dominates.
+    """
     if not concepts:
         return None
     counts: dict[str, int] = {}

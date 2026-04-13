@@ -19,6 +19,20 @@ PRIORITY_RE = re.compile(
 
 
 def answer_question(index_path: Path, session_ready: bool, question: str) -> ChatAnswer:
+    """Answer a grounded user question against a session retrieval index.
+
+    Args:
+        index_path: Path to the persisted retrieval index.
+        session_ready: Whether the session finished processing successfully enough for Q&A.
+        question: User question in free-form text.
+
+    Returns:
+        Fully grounded chat answer with evidence and tool trace.
+
+    Raises:
+        SessionNotReadyError: If the session is not yet ready for Q&A.
+        PFIAError: If no evidence could be found for the question.
+    """
     if not session_ready:
         raise SessionNotReadyError()
     retriever = SessionRetriever.load(index_path)
@@ -126,6 +140,18 @@ def _compose_answer(
     trend_notes: list[str],
     report_snippet: str,
 ) -> str:
+    """Compose the final natural-language answer from grounded evidence.
+
+    Args:
+        question: Original user question.
+        evidence: Retrieved evidence bundle.
+        comparison_payload: Optional comparison data for two clusters.
+        trend_notes: Optional trend remarks to append.
+        report_snippet: Optional report section excerpt.
+
+    Returns:
+        Rendered answer text.
+    """
     top = evidence.cluster_hits[0]
     lines = [
         f"The strongest grounded match for this question is `{top.cluster_id}` ({top.label}). {top.summary}",

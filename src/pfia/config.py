@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Runtime configuration for the PFIA application."""
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_prefix="PFIA_",
@@ -51,6 +53,11 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def apply_hosting_defaults(self) -> Settings:
+        """Derive hosting-specific defaults after environment loading.
+
+        Returns:
+            The mutated settings object with resolved data directory and worker mode.
+        """
         if self.data_dir is None:
             if self.railway_volume_mount_path is not None:
                 self.data_dir = self.railway_volume_mount_path / "runtime"
@@ -62,38 +69,46 @@ class Settings(BaseSettings):
 
     @property
     def db_path(self) -> Path:
+        """Return the SQLite database path."""
         assert self.data_dir is not None
         return self.data_dir / "pfia.sqlite3"
 
     @property
     def uploads_dir(self) -> Path:
+        """Return the directory for uploaded source files."""
         assert self.data_dir is not None
         return self.data_dir / "uploads"
 
     @property
     def artifacts_dir(self) -> Path:
+        """Return the directory for generated intermediate artifacts."""
         assert self.data_dir is not None
         return self.data_dir / "artifacts"
 
     @property
     def indexes_dir(self) -> Path:
+        """Return the directory for persisted retrieval indexes."""
         assert self.data_dir is not None
         return self.data_dir / "indexes"
 
     @property
     def reports_dir(self) -> Path:
+        """Return the directory for rendered Markdown reports."""
         assert self.data_dir is not None
         return self.data_dir / "reports"
 
     @property
     def raw_dir(self) -> Path:
+        """Return the directory for raw uploaded files."""
         return self.uploads_dir / "raw"
 
     @property
     def sanitized_dir(self) -> Path:
+        """Return the directory for sanitized preprocessing artifacts."""
         return self.artifacts_dir / "sanitized"
 
     def ensure_directories(self) -> None:
+        """Create the runtime directory tree required by the application."""
         assert self.data_dir is not None
         for path in (
             self.data_dir,
@@ -109,6 +124,11 @@ class Settings(BaseSettings):
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
+    """Load and cache the application settings singleton.
+
+    Returns:
+        Initialized settings object with all runtime directories created.
+    """
     settings = Settings()
     settings.ensure_directories()
     return settings

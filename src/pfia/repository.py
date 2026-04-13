@@ -23,16 +23,19 @@ from pfia.models import (
 
 
 def _json_dumps(value: Any) -> str:
+    """Serialize a Python value to UTF-8-safe JSON text."""
     return json.dumps(value, ensure_ascii=False)
 
 
 def _json_loads(value: str | None, default: Any) -> Any:
+    """Deserialize JSON text or return a default when empty."""
     if not value:
         return default
     return json.loads(value)
 
 
 def _parse_dt(value: str) -> datetime:
+    """Parse an ISO timestamp and ensure it is timezone-aware."""
     parsed = datetime.fromisoformat(value)
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=timezone.utc)
@@ -40,7 +43,14 @@ def _parse_dt(value: str) -> datetime:
 
 
 class Repository:
+    """Persistence adapter over the SQLite-backed PFIA schema."""
+
     def __init__(self, db: Database):
+        """Store the low-level database dependency.
+
+        Args:
+            db: Initialized database adapter.
+        """
         self.db = db
 
     def create_session_and_job(
@@ -53,6 +63,7 @@ class Repository:
         job_status: JobStatus = JobStatus.queued,
         stage: JobStage = JobStage.validate_input,
     ) -> None:
+        """Create the initial session row, job row, and accepted-upload event."""
         timestamp = utcnow().isoformat()
         with self.db.connection() as connection:
             connection.execute(
@@ -101,6 +112,7 @@ class Repository:
         level: str,
         message: str,
     ) -> None:
+        """Append a stage event to the audit log."""
         self.db.execute(
             """
             INSERT INTO job_events (job_id, session_id, stage, event, level, message, created_at)
@@ -118,6 +130,7 @@ class Repository:
         )
 
     def get_queue_depth(self) -> int:
+        """Return the number of jobs occupying the active queue."""
         row = self.db.fetchone(
             """
             SELECT COUNT(*) AS total
@@ -134,6 +147,7 @@ class Repository:
         return int(row["total"]) if row else 0
 
     def get_next_queued_job_id(self) -> str | None:
+        """Return the oldest queued job id, if one exists."""
         row = self.db.fetchone(
             """
             SELECT job_id
@@ -159,6 +173,7 @@ class Repository:
         degraded_mode: bool | None = None,
         message: str | None = None,
     ) -> None:
+        """Update mutable fields on a job and touch the parent session."""
         current = self.get_job(job_id)
         if current is None:
             raise KeyError(f"Unknown job_id: {job_id}")
@@ -210,6 +225,7 @@ class Repository:
         report_path: str | None = None,
         executive_summary: str | None = None,
     ) -> None:
+        """Update mutable fields on a session."""
         session = self.get_session(session_id)
         if session is None:
             raise KeyError(f"Unknown session_id: {session_id}")
@@ -239,6 +255,7 @@ class Repository:
     def save_preprocessing_summary(
         self, session_id: str, summary: PreprocessingSummary
     ) -> None:
+        """Upsert the preprocessing summary for a session."""
         self.db.execute(
             """
             INSERT INTO preprocessing_summaries (session_id, payload_json)
@@ -249,6 +266,7 @@ class Repository:
         )
 
     def replace_reviews(self, session_id: str, reviews: list[ReviewNormalized]) -> None:
+        """Replace the persisted sanitized reviews for a session."""
         with self.db.connection() as connection:
             connection.execute(
                 "DELETE FROM reviews WHERE session_id = ?", (session_id,)
@@ -286,6 +304,7 @@ class Repository:
         sentiment_by_review: dict[str, float],
         cluster_by_review: dict[str, str],
     ) -> None:
+        """Persist sentiment scores and cluster assignments for reviews."""
         with self.db.connection() as connection:
             for review_id, sentiment in sentiment_by_review.items():
                 connection.execute(
@@ -303,6 +322,7 @@ class Repository:
                 )
 
     def replace_clusters(self, session_id: str, clusters: list[ClusterRecord]) -> None:
+        """Replace the persisted cluster set for a session."""
         with self.db.connection() as connection:
             connection.execute(
                 "DELETE FROM clusters WHERE session_id = ?", (session_id,)
@@ -338,6 +358,7 @@ class Repository:
             )
 
     def replace_alerts(self, session_id: str, alerts: list[AlertRecord]) -> None:
+        """Replace the persisted alert set for a session."""
         with self.db.connection() as connection:
             connection.execute("DELETE FROM alerts WHERE session_id = ?", (session_id,))
             connection.executemany(
@@ -364,6 +385,7 @@ class Repository:
             )
 
     def add_chat_turn(self, session_id: str, role: str, content: str) -> None:
+        """Append one chat message to the session transcript."""
         self.db.execute(
             """
             INSERT INTO chat_turns (session_id, role, content, created_at)
@@ -375,6 +397,7 @@ class Repository:
     def get_recent_chat_turns(
         self, session_id: str, limit: int = 6
     ) -> list[dict[str, str]]:
+        """Return recent chat turns ordered from oldest to newest."""
         rows = self.db.fetchall(
             """
             SELECT role, content
@@ -390,6 +413,7 @@ class Repository:
         ]
 
     def get_session(self, session_id: str) -> SessionRecord | None:
+        """Fetch one session record by id."""
         row = self.db.fetchone(
             "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
         )
@@ -409,6 +433,7 @@ class Repository:
         )
 
     def get_job(self, job_id: str) -> JobRecord | None:
+        """Fetch one job record by id."""
         row = self.db.fetchone("SELECT * FROM jobs WHERE job_id = ?", (job_id,))
         if row is None:
             return None
@@ -426,6 +451,7 @@ class Repository:
         )
 
     def get_job_by_session(self, session_id: str) -> JobRecord | None:
+        """Fetch the latest job associated with a session."""
         row = self.db.fetchone(
             """
             SELECT j.*
@@ -440,6 +466,7 @@ class Repository:
         return self.get_job(str(row["job_id"]))
 
     def get_preprocessing_summary(self, session_id: str) -> PreprocessingSummary | None:
+        """Fetch the preprocessing summary for a session."""
         row = self.db.fetchone(
             "SELECT payload_json FROM preprocessing_summaries WHERE session_id = ?",
             (session_id,),
@@ -449,6 +476,7 @@ class Repository:
         return PreprocessingSummary.model_validate_json(row["payload_json"])
 
     def get_reviews(self, session_id: str) -> list[ReviewNormalized]:
+        """Fetch all persisted sanitized reviews for a session."""
         rows = self.db.fetchall(
             """
             SELECT *
@@ -479,6 +507,7 @@ class Repository:
     def get_quotes_for_cluster(
         self, session_id: str, cluster_id: str, limit: int = 3
     ) -> list[QuoteRecord]:
+        """Fetch representative anonymized quotes for a cluster."""
         rows = self.db.fetchall(
             """
             SELECT review_id, cluster_id, text_anonymized, source, created_at
@@ -501,6 +530,7 @@ class Repository:
         ]
 
     def get_clusters(self, session_id: str) -> list[ClusterRecord]:
+        """Fetch all persisted clusters for a session."""
         rows = self.db.fetchall(
             """
             SELECT *
@@ -531,6 +561,7 @@ class Repository:
         ]
 
     def get_cluster(self, session_id: str, cluster_id: str) -> ClusterRecord | None:
+        """Fetch one cluster by session and cluster id."""
         rows = [
             cluster
             for cluster in self.get_clusters(session_id)
@@ -539,6 +570,7 @@ class Repository:
         return rows[0] if rows else None
 
     def get_alerts(self, session_id: str) -> list[AlertRecord]:
+        """Fetch all persisted alerts for a session."""
         rows = self.db.fetchall(
             """
             SELECT *
@@ -563,6 +595,7 @@ class Repository:
         ]
 
     def get_report(self, session_id: str) -> ReportArtifact | None:
+        """Load the persisted report artifact for a session, if present."""
         session = self.get_session(session_id)
         if session is None or session.report_path is None:
             return None
@@ -581,12 +614,14 @@ class Repository:
         )
 
     def session_exists(self, session_id: str) -> bool:
+        """Return whether a session exists."""
         row = self.db.fetchone(
             "SELECT 1 AS ok FROM sessions WHERE session_id = ?", (session_id,)
         )
         return row is not None
 
     def get_session_detail(self, session_id: str) -> SessionDetail:
+        """Build the compound session view used by the API layer."""
         session = self.get_session(session_id)
         if session is None:
             raise KeyError(f"Unknown session_id: {session_id}")
@@ -603,6 +638,7 @@ class Repository:
         )
 
     def list_recovery_jobs(self) -> list[JobRecord]:
+        """List jobs that should be re-queued after a restart."""
         rows = self.db.fetchall(
             """
             SELECT job_id
@@ -623,6 +659,7 @@ class Repository:
         ]
 
     def get_job_events(self, session_id: str) -> list[dict[str, str]]:
+        """Return ordered stage events for a session."""
         rows = self.db.fetchall(
             """
             SELECT stage, event, level, message, created_at
@@ -644,7 +681,9 @@ class Repository:
         ]
 
     def update_worker_heartbeat(self, payload: dict[str, Any]) -> None:
+        """Persist the latest worker heartbeat payload."""
         self.db.upsert_system_state("worker_heartbeat", payload)
 
     def get_worker_heartbeat(self) -> sqlite3.Row | None:
+        """Fetch the latest worker heartbeat row."""
         return self.db.get_system_state("worker_heartbeat")

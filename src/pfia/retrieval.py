@@ -61,6 +61,8 @@ STOPWORDS = sorted(
 
 @dataclass
 class RetrievalIndex:
+    """Persisted retrieval payload stored on disk for one session."""
+
     session_id: str
     word_vectorizer: TfidfVectorizer
     char_vectorizer: TfidfVectorizer
@@ -80,6 +82,15 @@ def build_retrieval_index(
     report_sections: dict[str, str],
     index_path: Path,
 ) -> None:
+    """Build and serialize the retrieval index for one completed session.
+
+    Args:
+        session_id: Owning session identifier.
+        reviews: Review payload already enriched with cluster assignments.
+        clusters: Cluster metadata to index.
+        report_sections: Report snippets exposed to Q&A tools.
+        index_path: Output file path for the serialized index.
+    """
     cluster_docs = [
         " ".join(
             filter(
@@ -143,7 +154,14 @@ def build_retrieval_index(
 
 
 class SessionRetriever:
+    """Retrieval helper over a persisted session-scoped index."""
+
     def __init__(self, payload: RetrievalIndex):
+        """Materialize validated cluster models from a retrieval payload.
+
+        Args:
+            payload: Deserialized retrieval index.
+        """
         self.payload = payload
         self.clusters = [
             ClusterRecord.model_validate(cluster) for cluster in payload.clusters
@@ -152,6 +170,17 @@ class SessionRetriever:
 
     @classmethod
     def load(cls, index_path: Path) -> "SessionRetriever":
+        """Load a retriever from disk.
+
+        Args:
+            index_path: Path to the serialized retrieval index.
+
+        Returns:
+            Ready-to-use session retriever.
+
+        Raises:
+            PFIAError: If the retrieval index is missing.
+        """
         if not index_path.exists():
             raise PFIAError(
                 "NO_EVIDENCE_AVAILABLE",
@@ -163,6 +192,15 @@ class SessionRetriever:
         return cls(payload)
 
     def search_clusters(self, query: str, top_k: int = 5) -> list[ClusterHit]:
+        """Search clusters using hybrid lexical and semantic scoring.
+
+        Args:
+            query: Free-form search query.
+            top_k: Maximum number of hits to return.
+
+        Returns:
+            Ranked cluster hits.
+        """
         normalized_query = normalize_text(query)
         if not normalized_query:
             return []
@@ -207,6 +245,14 @@ class SessionRetriever:
         )[: min(top_k, 10)]
 
     def top_clusters(self, top_k: int = 3) -> list[ClusterHit]:
+        """Return the highest-priority clusters without query matching.
+
+        Args:
+            top_k: Maximum number of hits to return.
+
+        Returns:
+            Ranked cluster hits sorted by priority.
+        """
         ranked = sorted(
             self.clusters,
             key=lambda cluster: (
@@ -228,6 +274,15 @@ class SessionRetriever:
         ]
 
     def get_quotes(self, cluster_id: str, limit: int = 3) -> list[QuoteRecord]:
+        """Return representative quotes for a cluster.
+
+        Args:
+            cluster_id: Cluster identifier.
+            limit: Maximum number of quotes to return.
+
+        Returns:
+            Ranked quote records for the cluster.
+        """
         reviews = [
             review
             for review in self.payload.reviews
@@ -250,6 +305,17 @@ class SessionRetriever:
         ]
 
     def get_trend(self, cluster_id: str) -> TrendSnippet:
+        """Return trend metadata for a cluster.
+
+        Args:
+            cluster_id: Cluster identifier.
+
+        Returns:
+            Trend snippet for the cluster.
+
+        Raises:
+            PFIAError: If no trend data exists for the cluster.
+        """
         trend = self.payload.trends.get(cluster_id)
         if trend is None:
             raise PFIAError(
@@ -266,6 +332,18 @@ class SessionRetriever:
         )
 
     def compare_clusters(self, cluster_a: str, cluster_b: str) -> dict[str, Any]:
+        """Build a lightweight side-by-side comparison between two clusters.
+
+        Args:
+            cluster_a: Left cluster identifier.
+            cluster_b: Right cluster identifier.
+
+        Returns:
+            Comparison payload used by the Q&A composer.
+
+        Raises:
+            PFIAError: If either cluster identifier is unknown.
+        """
         left = self.cluster_by_id.get(cluster_a)
         right = self.cluster_by_id.get(cluster_b)
         if left is None or right is None:
@@ -294,6 +372,14 @@ class SessionRetriever:
         }
 
     def get_report_section(self, section_name: str) -> str:
+        """Return a stored report section by name.
+
+        Args:
+            section_name: Logical section key.
+
+        Returns:
+            Stored text snippet or an empty string when missing.
+        """
         return self.payload.report_sections.get(section_name, "")
 
     def build_evidence(
@@ -304,6 +390,20 @@ class SessionRetriever:
         quote_limit: int = 2,
         include_trends: bool = True,
     ) -> EvidenceBundle:
+        """Assemble the grounded evidence bundle used to answer a question.
+
+        Args:
+            query: Free-form user query.
+            top_k: Maximum number of cluster hits to keep.
+            quote_limit: Maximum quotes per cluster.
+            include_trends: Whether trend snippets should be added.
+
+        Returns:
+            Evidence bundle for downstream answer generation.
+
+        Raises:
+            PFIAError: If the retriever cannot find any grounded evidence.
+        """
         hits = self.search_clusters(query, top_k=top_k)
         if not hits:
             raise PFIAError(
@@ -329,6 +429,7 @@ class SessionRetriever:
         )
 
     def _transform_query(self, query: str):
+        """Vectorize a query with the stored TF-IDF models."""
         word = self.payload.word_vectorizer.transform([query])
         char = self.payload.char_vectorizer.transform([query])
         return hstack([word, char])

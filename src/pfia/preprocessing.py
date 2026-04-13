@@ -47,6 +47,14 @@ SUPPORTED_SOURCES = {
 
 
 def detect_language(text: str) -> str:
+    """Detect a coarse language bucket from Cyrillic and Latin characters.
+
+    Args:
+        text: Input review text.
+
+    Returns:
+        One of ``ru``, ``en``, ``mixed``, or ``unknown``.
+    """
     cyrillic = sum(
         1 for char in text if "а" <= char.lower() <= "я" or char.lower() == "ё"
     )
@@ -61,13 +69,30 @@ def detect_language(text: str) -> str:
 
 
 def detect_injection(text: str) -> bool:
+    """Check whether the text contains prompt-injection-like fragments.
+
+    Args:
+        text: Input review text.
+
+    Returns:
+        ``True`` when a suspicious pattern is detected.
+    """
     return any(pattern.search(text) for pattern in INJECTION_PATTERNS)
 
 
 def mask_pii(text: str) -> tuple[str, int]:
+    """Mask obvious PII patterns in free-form review text.
+
+    Args:
+        text: Raw review text.
+
+    Returns:
+        Tuple of ``(masked_text, pii_hit_count)``.
+    """
     pii_hits = 0
 
     def _sub(pattern: re.Pattern[str], replacement: str, current: str) -> str:
+        """Apply one regex replacement and accumulate PII hit counters."""
         nonlocal pii_hits
         current, count = pattern.subn(replacement, current)
         pii_hits += count
@@ -80,6 +105,7 @@ def mask_pii(text: str) -> tuple[str, int]:
     masked = _sub(URL_RE, "[URL]", masked)
 
     def name_repl(match: re.Match[str]) -> str:
+        """Replace a name hint while preserving the triggering phrase."""
         nonlocal pii_hits
         pii_hits += 1
         prefix = match.group(0).split()[0]
@@ -90,25 +116,61 @@ def mask_pii(text: str) -> tuple[str, int]:
 
 
 def has_residual_pii(text: str) -> bool:
+    """Check whether masked text still appears to contain unresolved PII.
+
+    Args:
+        text: Masked review text.
+
+    Returns:
+        ``True`` when a high-confidence PII regex still matches.
+    """
     return any(pattern.search(text) for pattern in (EMAIL_RE, PHONE_RE, UUID_RE))
 
 
 def is_low_information(text: str) -> bool:
+    """Detect reviews that are too short for meaningful analysis.
+
+    Args:
+        text: Review text.
+
+    Returns:
+        ``True`` when the content is too sparse for reliable clustering.
+    """
     tokens = [token for token in re.split(r"\W+", text) if token]
     return len(tokens) < 3 or len(text) < 12
 
 
 def is_spam(text: str) -> bool:
+    """Detect simple spam signals in a review.
+
+    Args:
+        text: Review text.
+
+    Returns:
+        ``True`` when the text matches spam-like heuristics.
+    """
     lowered = text.lower()
     return lowered.count("http") > 2 or re.search(r"(.)\1{6,}", lowered) is not None
 
 
 def _parse_csv(content: bytes) -> list[dict[str, Any]]:
+    """Parse CSV upload bytes into record dictionaries."""
     reader = csv.DictReader(io.StringIO(content.decode("utf-8-sig")))
     return [dict(row) for row in reader]
 
 
 def _parse_json(content: bytes) -> list[dict[str, Any]]:
+    """Parse JSON upload bytes into record dictionaries.
+
+    Args:
+        content: Raw JSON file bytes.
+
+    Returns:
+        Review-like records extracted from the payload.
+
+    Raises:
+        PFIAError: If the JSON payload does not match the accepted schema.
+    """
     payload = json.loads(content.decode("utf-8"))
     if isinstance(payload, dict):
         if "reviews" in payload and isinstance(payload["reviews"], list):
@@ -125,6 +187,17 @@ def _parse_json(content: bytes) -> list[dict[str, Any]]:
 
 
 def load_records(upload_path: Path) -> list[dict[str, Any]]:
+    """Load supported upload formats into a uniform record list.
+
+    Args:
+        upload_path: Path to the uploaded file.
+
+    Returns:
+        Parsed records from the file.
+
+    Raises:
+        PFIAError: If the file extension is unsupported.
+    """
     suffix = upload_path.suffix.lower()
     content = upload_path.read_bytes()
     if suffix == ".csv":
@@ -137,6 +210,19 @@ def load_records(upload_path: Path) -> list[dict[str, Any]]:
 def preprocess_upload(
     upload_path: Path, session_id: str, settings: Settings
 ) -> tuple[list[ReviewNormalized], PreprocessingSummary]:
+    """Normalize, validate, deduplicate, and sanitize an uploaded batch.
+
+    Args:
+        upload_path: Path to the uploaded CSV or JSON file.
+        session_id: Owning session identifier.
+        settings: Runtime settings that define batch limits and thresholds.
+
+    Returns:
+        Tuple of normalized reviews and a preprocessing summary.
+
+    Raises:
+        PFIAError: If the upload is invalid, too large, or fails the privacy gate.
+    """
     records = load_records(upload_path)
     if not records:
         raise PFIAError(
@@ -250,6 +336,12 @@ def preprocess_upload(
 
 
 def write_sanitized_jsonl(output_path: Path, reviews: list[ReviewNormalized]) -> None:
+    """Persist sanitized reviews as JSONL for debugging and inspection.
+
+    Args:
+        output_path: Destination JSONL path.
+        reviews: Reviews to serialize.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
         for review in reviews:
@@ -258,6 +350,14 @@ def write_sanitized_jsonl(output_path: Path, reviews: list[ReviewNormalized]) ->
 
 
 def _parse_rating(value: Any) -> int | None:
+    """Coerce a rating field into the supported 1-5 range.
+
+    Args:
+        value: Raw rating value from the upload payload.
+
+    Returns:
+        Normalized integer rating or ``None`` when parsing fails.
+    """
     if value in (None, "", "null"):
         return None
     try:

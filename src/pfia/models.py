@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class JobStatus(str, Enum):
+    """Lifecycle states for asynchronous jobs."""
+
     queued = "QUEUED"
     running = "RUNNING"
     retrying = "RETRYING"
@@ -23,6 +25,8 @@ class JobStatus(str, Enum):
 
 
 class JobStage(str, Enum):
+    """Pipeline stages tracked for each job."""
+
     validate_input = "VALIDATE_INPUT"
     preprocess = "PREPROCESS"
     embed = "EMBED"
@@ -36,6 +40,8 @@ class JobStage(str, Enum):
 
 
 class SessionStatus(str, Enum):
+    """User-visible states for an uploaded review session."""
+
     queued = "QUEUED"
     processing = "PROCESSING"
     completed = "COMPLETED"
@@ -44,6 +50,8 @@ class SessionStatus(str, Enum):
 
 
 class ToolName(str, Enum):
+    """Tool identifiers exposed by the grounded Q&A layer."""
+
     search_clusters = "search_clusters"
     get_quotes = "get_quotes"
     get_trend = "get_trend"
@@ -52,6 +60,8 @@ class ToolName(str, Enum):
 
 
 class ReviewNormalized(BaseModel):
+    """Normalized and anonymized review record."""
+
     model_config = ConfigDict(extra="forbid")
 
     review_id: str
@@ -69,6 +79,8 @@ class ReviewNormalized(BaseModel):
 
 
 class PreprocessingSummary(BaseModel):
+    """Aggregate counters emitted by the preprocessing stage."""
+
     total_records: int
     kept_records: int
     duplicate_records: int
@@ -80,6 +92,8 @@ class PreprocessingSummary(BaseModel):
 
 
 class ClusterRecord(BaseModel):
+    """Serializable representation of a feedback cluster."""
+
     cluster_id: str
     label: str
     summary: str
@@ -97,6 +111,8 @@ class ClusterRecord(BaseModel):
 
 
 class AlertRecord(BaseModel):
+    """Anomaly or informational alert produced by analysis."""
+
     alert_id: str
     cluster_id: str
     type: str
@@ -108,6 +124,8 @@ class AlertRecord(BaseModel):
 
 
 class ReportArtifact(BaseModel):
+    """Rendered report metadata plus Markdown content."""
+
     report_id: str
     session_id: str
     path: str
@@ -118,12 +136,16 @@ class ReportArtifact(BaseModel):
 
 
 class ToolTrace(BaseModel):
+    """Trace entry describing one tool invocation in Q&A."""
+
     tool: ToolName
     input: dict[str, Any]
     output_summary: str
 
 
 class ClusterHit(BaseModel):
+    """Ranked retrieval hit for a cluster."""
+
     cluster_id: str
     score: float
     match_reason: str
@@ -133,6 +155,8 @@ class ClusterHit(BaseModel):
 
 
 class QuoteRecord(BaseModel):
+    """Grounding quote selected from a clustered review."""
+
     review_id: str
     cluster_id: str
     text: str
@@ -141,6 +165,8 @@ class QuoteRecord(BaseModel):
 
 
 class TrendSnippet(BaseModel):
+    """Trend metadata returned as evidence for a cluster."""
+
     cluster_id: str
     trend_delta: float
     baseline: float | None = None
@@ -149,6 +175,8 @@ class TrendSnippet(BaseModel):
 
 
 class EvidenceBundle(BaseModel):
+    """Grounded evidence assembled for a chat response."""
+
     query: str
     cluster_hits: list[ClusterHit]
     quotes: list[QuoteRecord]
@@ -157,6 +185,8 @@ class EvidenceBundle(BaseModel):
 
 
 class ChatAnswer(BaseModel):
+    """Full grounded answer payload returned by the Q&A layer."""
+
     answer: str
     evidence: EvidenceBundle
     tool_trace: list[ToolTrace]
@@ -164,6 +194,8 @@ class ChatAnswer(BaseModel):
 
 
 class JobRecord(BaseModel):
+    """Persisted metadata for one asynchronous job."""
+
     job_id: str
     session_id: str
     status: JobStatus
@@ -177,6 +209,8 @@ class JobRecord(BaseModel):
 
 
 class SessionRecord(BaseModel):
+    """Persisted metadata for one uploaded dataset session."""
+
     session_id: str
     status: SessionStatus
     latest_job_id: str
@@ -190,6 +224,8 @@ class SessionRecord(BaseModel):
 
 
 class SessionDetail(BaseModel):
+    """Compound session view returned by the API and repository."""
+
     session: SessionRecord
     job: JobRecord
     preprocessing_summary: PreprocessingSummary | None = None
@@ -199,16 +235,22 @@ class SessionDetail(BaseModel):
 
 
 class UploadResponse(BaseModel):
+    """API response returned immediately after a file upload."""
+
     session_id: str
     job_id: str
     status: str
 
 
 class ChatRequest(BaseModel):
+    """Request body for grounded Q&A."""
+
     question: str = Field(min_length=3, max_length=1000)
 
 
 class ChatResponse(BaseModel):
+    """API response body for grounded Q&A."""
+
     session_id: str
     question: str
     answer: str

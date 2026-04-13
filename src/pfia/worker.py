@@ -21,6 +21,15 @@ def worker_loop(
     stop_event: Event | None = None,
     heartbeat_mode: str | None = None,
 ) -> None:
+    """Run the polling loop that processes queued jobs.
+
+    Args:
+        service: Service facade that owns job execution logic.
+        settings: Runtime settings controlling polling cadence.
+        once: Whether to process at most one job and exit.
+        stop_event: Optional event used to stop the loop gracefully.
+        heartbeat_mode: Optional worker mode recorded in heartbeat state.
+    """
     recovered = service.recover_inflight_jobs()
     if recovered:
         logger.warning("Recovered %s in-flight jobs after restart.", recovered)
@@ -48,6 +57,11 @@ def worker_loop(
 
 
 def run_worker(once: bool = False) -> None:
+    """Build the default application context and start the standalone worker.
+
+    Args:
+        once: Whether to process at most one job and exit.
+    """
     settings = get_settings()
     context = build_app_context(settings)
     service = PFIAService(context)
@@ -55,6 +69,7 @@ def run_worker(once: bool = False) -> None:
 
 
 def main() -> None:
+    """CLI entrypoint for the standalone worker process."""
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
     )

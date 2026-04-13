@@ -33,6 +33,8 @@ FAILED_STATUS_BY_CODE = {
 
 @dataclass
 class AppContext:
+    """Runtime container for shared application dependencies."""
+
     settings: Settings
     db: Database
     repo: Repository
@@ -40,6 +42,14 @@ class AppContext:
 
 
 def build_app_context(settings: Settings | None = None) -> AppContext:
+    """Construct the shared dependency container for PFIA.
+
+    Args:
+        settings: Optional explicit settings instance.
+
+    Returns:
+        Initialized application context with storage and metrics dependencies.
+    """
     resolved_settings = settings or get_settings()
     resolved_settings.ensure_directories()
     db = Database(resolved_settings.db_path)
@@ -52,7 +62,14 @@ def build_app_context(settings: Settings | None = None) -> AppContext:
 
 
 class PFIAService:
+    """High-level orchestration facade for uploads, jobs, reports, and Q&A."""
+
     def __init__(self, context: AppContext):
+        """Store shared runtime dependencies for service operations.
+
+        Args:
+            context: Initialized dependency container.
+        """
         self.context = context
         self.settings = context.settings
         self.repo = context.repo
@@ -61,6 +78,19 @@ class PFIAService:
     def upload_file(
         self, filename: str, content: bytes, content_type: str | None = None
     ) -> UploadResponse:
+        """Validate an upload, persist it, and enqueue a new job.
+
+        Args:
+            filename: Original uploaded filename.
+            content: Raw file bytes.
+            content_type: Optional MIME type from the client.
+
+        Returns:
+            Upload response containing the new session and job identifiers.
+
+        Raises:
+            PFIAError: If the filename is missing, the file is too large, or the queue is full.
+        """
         if not filename:
             raise PFIAError(
                 "INPUT_SCHEMA_INVALID", "Uploaded file must have a filename."
@@ -97,6 +127,11 @@ class PFIAService:
         return UploadResponse(session_id=session_id, job_id=job_id, status="QUEUED")
 
     def process_next_job(self) -> str | None:
+        """Process the oldest queued job, if one exists.
+
+        Returns:
+            Processed job id or ``None`` when the queue is empty.
+        """
         job_id = self.repo.get_next_queued_job_id()
         if job_id is None:
             self.metrics.queue_depth.set(self.repo.get_queue_depth())
@@ -106,6 +141,15 @@ class PFIAService:
         return job_id
 
     def process_job(self, job_id: str) -> None:
+        """Execute the full batch-processing pipeline for one job.
+
+        Args:
+            job_id: Identifier of the queued job to process.
+
+        Raises:
+            KeyError: If the job or its session cannot be found.
+            PFIAError: If a pipeline stage fails with a structured application error.
+        """
         job = self.repo.get_job(job_id)
         if job is None:
             raise KeyError(f"Unknown job_id: {job_id}")
@@ -218,6 +262,16 @@ class PFIAService:
                 ).observe(elapsed)
 
     def _run_preprocess(self, job_id: str, session_id: str, upload_path: Path):
+        """Run preprocessing and persist sanitized review artifacts.
+
+        Args:
+            job_id: Owning job identifier.
+            session_id: Owning session identifier.
+            upload_path: Path to the raw uploaded file.
+
+        Returns:
+            Tuple of sanitized reviews and preprocessing summary.
+        """
         self.repo.set_job_state(
             job_id, stage=JobStage.preprocess, message="Preprocessing reviews"
         )
@@ -251,6 +305,18 @@ class PFIAService:
     def _run_analysis(
         self, job_id: str, session_id: str, reviews, summary
     ) -> AnalysisArtifacts:
+        """Run clustering, sentiment scoring, and anomaly detection.
+
+        Args:
+            job_id: Owning job identifier.
+            session_id: Owning session identifier.
+            reviews: Sanitized reviews ready for analysis.
+            summary: Preprocessing summary, reserved for future analysis hooks.
+
+        Returns:
+            Analysis artifact bundle.
+        """
+        _ = summary
         self.repo.set_job_state(
             job_id, stage=JobStage.embed, message="Building embeddings"
         )
@@ -313,6 +379,19 @@ class PFIAService:
         analysis: AnalysisArtifacts,
         degraded_mode: bool,
     ) -> Path:
+        """Build retrieval artifacts and the final Markdown report.
+
+        Args:
+            job_id: Owning job identifier.
+            session_id: Owning session identifier.
+            summary: Preprocessing summary used in report rendering.
+            reviews: Sanitized reviews with downstream annotations.
+            analysis: Analysis outputs used by reporting and retrieval.
+            degraded_mode: Whether the run completed in degraded mode.
+
+        Returns:
+            Path to the persisted Markdown report.
+        """
         self.repo.set_job_state(
             job_id,
             status=JobStatus.degraded_running if degraded_mode else JobStatus.running,
@@ -398,6 +477,14 @@ class PFIAService:
         return report_path
 
     def get_session_detail(self, session_id: str) -> dict[str, Any]:
+        """Return a session view augmented with ordered stage events.
+
+        Args:
+            session_id: Session identifier.
+
+        Returns:
+            JSON-serializable session payload.
+        """
         detail = self.repo.get_session_detail(session_id)
         return {
             **detail.model_dump(mode="json"),
@@ -405,6 +492,18 @@ class PFIAService:
         }
 
     def chat(self, session_id: str, question: str) -> dict[str, Any]:
+        """Answer a grounded question for a completed session.
+
+        Args:
+            session_id: Session identifier.
+            question: User question.
+
+        Returns:
+            JSON-serializable grounded answer payload.
+
+        Raises:
+            PFIAError: If the session does not exist or evidence cannot be found.
+        """
         session = self.repo.get_session(session_id)
         if session is None:
             raise PFIAError(
@@ -434,6 +533,11 @@ class PFIAService:
         }
 
     def recover_inflight_jobs(self) -> int:
+        """Re-queue jobs left running after an unclean shutdown.
+
+        Returns:
+            Number of jobs that were moved back to the queue.
+        """
         recovered = 0
         for job in self.repo.list_recovery_jobs():
             self.repo.set_job_state(
@@ -455,12 +559,22 @@ class PFIAService:
         return recovered
 
     def update_worker_heartbeat(self, *, mode: str | None = None) -> None:
+        """Write the latest worker heartbeat to persistent system state.
+
+        Args:
+            mode: Optional explicit worker mode override.
+        """
         worker_mode = mode or (
             "embedded" if self.settings.embedded_worker else "standalone"
         )
         self.repo.update_worker_heartbeat({"status": "alive", "mode": worker_mode})
 
     def readiness(self) -> dict[str, Any]:
+        """Compute the readiness payload used by the HTTP probe.
+
+        Returns:
+            JSON-serializable readiness payload.
+        """
         worker_state = self.repo.get_worker_heartbeat()
         if worker_state is None:
             return {

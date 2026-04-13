@@ -129,27 +129,46 @@ CREATE INDEX IF NOT EXISTS idx_alerts_session ON alerts(session_id);
 
 
 def utcnow() -> datetime:
+    """Return the current UTC timestamp."""
     return datetime.now(timezone.utc)
 
 
 class Database:
+    """Thin SQLite access layer used by the repository."""
+
     def __init__(self, db_path: Path):
+        """Initialize the database file and ensure the schema exists.
+
+        Args:
+            db_path: Filesystem path to the SQLite database file.
+        """
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
+        """Open a configured SQLite connection.
+
+        Returns:
+            SQLite connection with row factory enabled.
+        """
         connection = sqlite3.connect(self.db_path, timeout=30, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         return connection
 
     def _initialize(self) -> None:
+        """Apply the embedded schema to the database."""
         with self._connect() as connection:
             connection.executescript(SCHEMA)
             connection.commit()
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:
+        """Yield a transaction-scoped SQLite connection.
+
+        Yields:
+            An open SQLite connection that is committed and closed automatically.
+        """
         connection = self._connect()
         try:
             yield connection
@@ -158,18 +177,48 @@ class Database:
             connection.close()
 
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> None:
+        """Execute a write-oriented SQL statement.
+
+        Args:
+            query: SQL text to execute.
+            params: Positional parameters bound to the statement.
+        """
         with self.connection() as connection:
             connection.execute(query, params)
 
     def fetchone(self, query: str, params: tuple[Any, ...] = ()) -> sqlite3.Row | None:
+        """Fetch a single SQLite row.
+
+        Args:
+            query: SQL text to execute.
+            params: Positional parameters bound to the statement.
+
+        Returns:
+            The first matching row, if any.
+        """
         with self.connection() as connection:
             return connection.execute(query, params).fetchone()
 
     def fetchall(self, query: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+        """Fetch all rows for a query.
+
+        Args:
+            query: SQL text to execute.
+            params: Positional parameters bound to the statement.
+
+        Returns:
+            List of matching rows.
+        """
         with self.connection() as connection:
             return list(connection.execute(query, params).fetchall())
 
     def upsert_system_state(self, key: str, value: dict[str, Any] | str) -> None:
+        """Insert or replace a key-value entry in the system state table.
+
+        Args:
+            key: Stable system-state key.
+            value: String or JSON-serializable payload.
+        """
         if not isinstance(value, str):
             value = json.dumps(value, ensure_ascii=False)
         timestamp = utcnow().isoformat()
@@ -185,4 +234,12 @@ class Database:
         )
 
     def get_system_state(self, key: str) -> sqlite3.Row | None:
+        """Fetch a system-state row by key.
+
+        Args:
+            key: Stable system-state key.
+
+        Returns:
+            Matching row or ``None`` when no value was written yet.
+        """
         return self.fetchone("SELECT * FROM system_state WHERE key = ?", (key,))
