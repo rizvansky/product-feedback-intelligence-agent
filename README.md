@@ -4,6 +4,30 @@ PFIA — это PoC-система для пакетного анализа по
 
 Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite и persisted retrieval index на диске. Поддержка `OPENAI_API_KEY` подготовлена на уровне конфигурации, но для базового прогона не требуется.
 
+## Live Demo
+
+Текущий публичный деплой, проверенный 13 апреля 2026 года:
+
+- Demo URL: `https://product-feedback-intelligence-agent-production.up.railway.app`
+- GitHub repository: `https://github.com/rizvansky/product-feedback-intelligence-agent`
+
+Быстрая проверка hosted PoC занимает 1-2 минуты:
+
+1. Открыть demo URL.
+1. Нажать `Run Demo Dataset`.
+1. Дождаться статуса `COMPLETED`.
+1. Убедиться, что в UI появились clusters, Markdown report и timeline events.
+1. В Q&A задать: `What is the highest-priority issue and what evidence supports it?`
+
+Ожидаемый результат:
+
+- top issue: `Payment flow crashes`
+- количество кластеров на demo batch: `8`
+- health endpoints доступны:
+  - `/health/live`
+  - `/health/ready`
+  - `/metrics`
+
 ## Что Реализовано
 
 - Upload отзывов в формате CSV/JSON через web UI и HTTP API.
@@ -126,6 +150,13 @@ make demo
 
 - `data/demo/mobile_app_reviews.csv`
 
+Характеристики demo dataset:
+
+- `36` отзывов;
+- `18` из `app_store`, `18` из `google_play`;
+- период: с `2026-03-17` по `2026-04-12`;
+- основные темы: payment flow crashes, login code delays, positive UX feedback.
+
 Через UI можно:
 
 1. Нажать `Run Demo Dataset`.
@@ -159,12 +190,18 @@ make demo
 
 Проверки, выполненные на текущем состоянии проекта:
 
-- `pytest`: `4 passed`
+- `pytest`: `6 passed`
 - локальный smoke batch-flow
 - локальный smoke grounded Q&A
 - `docker compose build`
 - `docker compose up -d`
 - e2e upload → process → chat через живой Docker API
+- hosted Railway deployment:
+  - public URL отвечает;
+  - `/health/live` возвращает `{"status":"ok"}`;
+  - `/health/ready` возвращает `ready=true`, `worker.mode=embedded`, `storage.data_dir=/data/runtime`;
+  - demo batch успешно доходит до `COMPLETED`;
+  - hosted Q&A возвращает grounded answer по `payment_flow_crashes_1`
 
 ## Качество И Безопасность
 
@@ -235,5 +272,6 @@ make demo
 - [Module Specs](docs/specs/README.md)
 - [Architecture Diagrams](docs/diagrams/README.md)
 - [Railway Deploy Runbook](docs/deploy/railway.md)
+- [Async Review Guide](docs/review-guide.md)
 
 Важно: часть документов описывает более широкий target design, чем текущая PoC-реализация. Для сдачи ориентироваться стоит прежде всего на этот `README` и фактический код в репозитории.
