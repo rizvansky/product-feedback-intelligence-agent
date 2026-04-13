@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pfia"
+version = "0.1.0"
+description = "Product Feedback Intelligence Agent PoC"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.135.3",
+  "uvicorn[standard]>=0.44.0",
+  "pydantic-settings>=2.13.1",
+  "python-multipart>=0.0.26",
+  "numpy>=2.2.6",
+  "scikit-learn>=1.7.2",
+  "httpx>=0.28.1",
+  "prometheus-client>=0.25.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9.0.3"]
+
+[project.scripts]
+pfia-api = "pfia.api:main"
+pfia-worker = "pfia.worker:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pfia = ["static/*"]

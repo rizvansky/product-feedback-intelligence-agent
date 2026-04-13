@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PFIA PoC</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="background-glow background-glow-a"></div>
+    <div class="background-glow background-glow-b"></div>
+    <main class="shell">
+      <section class="hero card">
+        <div class="eyebrow">Product Feedback Intelligence Agent</div>
+        <h1>Turn a raw review export into an explainable product brief.</h1>
+        <p class="hero-copy">
+          Upload CSV or JSON feedback, let the worker process the batch, then inspect the report, anomalies,
+          and grounded Q&amp;A without leaving the browser.
+        </p>
+        <div class="hero-actions">
+          <button id="run-demo" class="button button-primary">Run Demo Dataset</button>
+          <a class="button button-secondary" href="/api/demo/sample-file">Download Demo CSV</a>
+        </div>
+      </section>
+
+      <section class="grid">
+        <article class="card panel">
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">1. Upload</span>
+              <h2>Queue a batch job</h2>
+            </div>
+            <span id="queue-state" class="badge">Idle</span>
+          </div>
+          <form id="upload-form" class="stack">
+            <input id="upload-input" type="file" accept=".csv,.json" required />
+            <button type="submit" class="button button-primary">Upload And Process</button>
+          </form>
+          <p class="hint">Batch limit: 2,000 reviews. Raw PII is masked before indexing or report generation.</p>
+          <div id="upload-result" class="inline-message hidden"></div>
+        </article>
+
+        <article class="card panel">
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">2. Session</span>
+              <h2>Live execution state</h2>
+            </div>
+            <span id="session-status" class="badge">No session</span>
+          </div>
+          <div id="session-meta" class="stack compact muted">
+            <div>Upload a dataset or launch the demo to populate this view.</div>
+          </div>
+          <div id="summary-metrics" class="metrics-grid"></div>
+        </article>
+      </section>
+
+      <section class="grid report-grid">
+        <article class="card panel">
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">3. Findings</span>
+              <h2>Top clusters and alerts</h2>
+            </div>
+          </div>
+          <div id="clusters" class="stack"></div>
+        </article>
+
+        <article class="card panel">
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">4. Report</span>
+              <h2>Markdown artifact</h2>
+            </div>
+          </div>
+          <pre id="report-output" class="report-box">The report will appear here after the job completes.</pre>
+        </article>
+      </section>
+
+      <section class="grid">
+        <article class="card panel">
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">5. Q&amp;A</span>
+              <h2>Ask grounded questions</h2>
+            </div>
+          </div>
+          <form id="chat-form" class="stack">
+            <textarea
+              id="chat-question"
+              rows="4"
+              placeholder="Example: What is the highest-priority issue in this batch and what evidence supports it?"
+            ></textarea>
+            <button type="submit" class="button button-primary">Ask PFIA</button>
+          </form>
+          <div id="chat-answer" class="stack hidden"></div>
+        </article>
+
+        <article class="card panel">
+          <div class="panel-header">
+            <div>
+              <span class="eyebrow">6. Timeline</span>
+              <h2>Stage events</h2>
+            </div>
+          </div>
+          <div id="events" class="events"></div>
+        </article>
+      </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

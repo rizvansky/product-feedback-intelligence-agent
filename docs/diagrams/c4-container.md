@@ -7,15 +7,13 @@ flowchart TB
     user["Продакт-менеджер"]
 
     subgraph pfia["PFIA PoC / Docker Compose"]
-        ui["Next.js Frontend"]
-        api["FastAPI API Gateway"]
+        api["FastAPI Web App<br/>API + Static UI"]
         worker["Worker / Orchestrator"]
         tool["Tool Layer"]
-        retr["Retriever / Index Service"]
 
         subgraph storage["Storage"]
             sql["SQLite (WAL)<br/>jobs, sessions, checkpoints"]
-            chroma["ChromaDB persistent<br/>review / cluster vectors"]
+            index["On-disk retrieval index<br/>session-scoped pickle artifacts"]
             files["Local volume<br/>uploads, sanitized artifacts, reports"]
         end
 
@@ -27,23 +25,19 @@ flowchart TB
     end
 
     openai["OpenAI API"]
-    anthropic["Anthropic API"]
     langsmith["LangSmith / OTLP sink"]
 
-    user --> ui
-    ui --> api
+    user --> api
     api --> sql
     api --> files
     api --> worker
     worker --> sql
     worker --> files
-    worker --> chroma
+    worker --> index
     worker --> tool
-    tool --> retr
-    retr --> chroma
-    retr --> sql
+    tool --> index
+    tool --> sql
     worker --> openai
-    worker --> anthropic
     api --> metrics
     worker --> metrics
     api --> logs

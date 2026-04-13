@@ -6,33 +6,41 @@
 
 ## Контейнеры
 
+Локальный PoC-профиль использует два runtime-сервиса:
+
 | Контейнер | Роль |
 |---|---|
-| `frontend` | Next.js UI |
-| `api` | FastAPI serving layer |
+| `api` | FastAPI serving layer + встроенный статический frontend |
 | `worker` | orchestrator и batch-processing |
-| `chroma` | vector store |
 
 Дополнительно, без отдельного контейнера:
 
 - SQLite на общем volume;
-- local storage volume для артефактов.
+- local storage volume для upload-файлов, sanitized artifacts, reports и retrieval index;
+- persisted on-disk retrieval index вместо отдельного Chroma-контейнера.
+
+Hosted deploy profile для Railway упрощён до одного web-service:
+
+- `api` остаётся FastAPI serving layer;
+- `worker` поднимается как embedded background thread внутри того же процесса;
+- runtime state уходит в Railway volume через `RAILWAY_VOLUME_MOUNT_PATH`.
 
 ## Обязательные конфиги
 
 | Переменная | Назначение |
 |---|---|
-| `PFIA_ENV` | `dev` / `demo` |
+| `PFIA_ENV` | `dev` / `demo` / `prod` |
 | `PFIA_DATA_DIR` | корневая директория данных |
-| `OPENAI_API_KEY` | ключ primary provider |
-| `ANTHROPIC_API_KEY` | ключ fallback provider |
-| `LLM_PRIMARY_MODEL` | основная generation model |
-| `LLM_FALLBACK_MODEL` | резервная generation model |
-| `EMBEDDING_PROVIDER` | `openai` / `local` |
-| `MAX_BATCH_SIZE` | верхняя граница batch |
-| `SESSION_RETENTION_DAYS` | срок хранения артефактов |
-| `PROMETHEUS_ENABLED` | включение `/metrics` |
-| `LANGSMITH_TRACING` | включение внешней трассировки |
+| `PFIA_EMBEDDED_WORKER` | принудительно включает single-service mode |
+| `PFIA_PORT` / `PORT` | HTTP port |
+| `OPENAI_API_KEY` | опциональный ключ внешнего provider, если он будет использоваться |
+| `OPENAI_BASE_URL` | base URL внешнего provider |
+| `PFIA_LLM_PRIMARY_MODEL` | основная generation model |
+| `PFIA_LLM_FALLBACK_MODEL` | резервная generation model |
+| `PFIA_EMBEDDING_BACKEND` | `local` / `openai` |
+| `PFIA_MAX_BATCH_SIZE` | верхняя граница batch |
+| `PFIA_SESSION_RETENTION_DAYS` | срок хранения артефактов |
+| `PFIA_PROMETHEUS_ENABLED` | включение `/metrics` |
 
 ## Версии моделей
 
@@ -56,17 +64,21 @@
 `ready` считается `false`, если:
 
 - нет доступа к SQLite или data volume;
-- worker не может писать checkpoint;
-- primary и fallback generation providers одновременно недоступны дольше заданного окна.
+- worker не может обновлять heartbeat;
+- heartbeat от worker протух дольше заданного окна.
 
 ## Ресурсные ограничения
 
 | Компонент | CPU / RAM target |
 |---|---|
-| `frontend` | минимально, без жёстких вычислений |
 | `api` | до 0,5 vCPU / 512 MB |
 | `worker` | до 1 vCPU / 2 GB |
-| `chroma` | до 0,5 vCPU / 1 GB |
+
+Для Railway-hosted single-service режима целевой sizing проще:
+
+| Компонент | CPU / RAM target |
+|---|---|
+| `pfia-web` | от 1 vCPU / 1 GB |
 
 ## Секреты
 
@@ -79,3 +91,4 @@
 - Один batch-job одновременно.
 - Новые jobs не принимаются в `RUNNING`, если очередь уже заполнена.
 - Chat доступен только для завершённых session.
+- Hosted deploy фиксируется в `1` реплику, пока state основан на SQLite и локальных файлах.

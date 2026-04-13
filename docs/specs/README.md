@@ -10,3 +10,7 @@
 - [Agent & Orchestrator](./agent-orchestrator.md)
 - [Serving & Config](./serving-config.md)
 - [Observability & Evals](./observability-evals.md)
+
+Отдельно для hosted rollout:
+
+- [Railway Deploy Runbook](../deploy/railway.md)

@@ -1,0 +1,36 @@
+---
+services:
+  api:
+    build:
+      context: .
+    command: [pfia-api, --host, 0.0.0.0, --port, '8000']
+    env_file: [.env.example]
+    environment:
+      PFIA_DATA_DIR: /app/data/runtime
+    ports: [8000:8000]
+    volumes: [pfia_data:/app/data/runtime]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+  worker:
+    build:
+      context: .
+    command: [pfia-worker]
+    env_file: [.env.example]
+    environment:
+      PFIA_DATA_DIR: /app/data/runtime
+    volumes: [pfia_data:/app/data/runtime]
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+volumes:
+  pfia_data:

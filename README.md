@@ -1,95 +1,239 @@
 # Product Feedback Intelligence Agent (PFIA)
 
-______________________________________________________________________
+PFIA — это PoC-система для пакетного анализа пользовательского фидбека: загрузка CSV/JSON, анонимизация PII, тематическая кластеризация, приоритизация проблем, anomaly detection, Markdown-отчёт и grounded Q&A по уже обработанной сессии.
 
-## Что за задача, для кого, и какая боль сейчас
+Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite и persisted retrieval index на диске. Поддержка `OPENAI_API_KEY` подготовлена на уровне конфигурации, но для базового прогона не требуется.
 
-**Для кого**: продакт‑менеджеры, продуктовые аналитики, команды роста в продуктовых компаниях.
+## Что Реализовано
 
-**В чём проблема сейчас**
+- Upload отзывов в формате CSV/JSON через web UI и HTTP API.
+- Асинхронный batch-flow через `job` + отдельный worker process.
+- Privacy gate:
+  - masking email / phone / device-like identifiers;
+  - quarantine при residual PII;
+  - raw PII не сохраняется в sanitized artifacts, отчётах и retrieval.
+- Локальный analysis pipeline:
+  - multilingual preprocessing;
+  - concept-enhanced clustering;
+  - priority scoring;
+  - anomaly detection по weekly baseline;
+  - Markdown report + executive summary.
+- Grounded Q&A с tool-like retrieval:
+  - `search_clusters`;
+  - `get_quotes`;
+  - `get_trend`;
+  - `compare_clusters`;
+  - `get_report_section`.
+- Health endpoints, Prometheus-compatible `/metrics`, Docker Compose, demo dataset и тесты.
+- Hosted deploy profile под Railway: single-service режим с embedded worker и persistent volume.
 
-Продуктовые команды систематически не успевают полноценно обрабатывать отзывы пользователей. По данным исследования Birdie.ai "Состояние пользовательского фидбека в продуктовой разработке" (2023 год, опрошено более 150 специалистов по продуктам), **около 50 % команд анализируют отзывы лишь от случая к случаю или не анализируют вообще**:
+## Реальный Stack В Репозитории
 
-- 43,5 % - разбирают фидбек только по мере возникновения острой необходимости (ad hoc);
-- 6,9 % - вообще не занимаются анализом отзывов;
-- лишь 42,1 % проводят анализ регулярно - ежедневно или еженедельно.
+Текущая имплементация намеренно проще изначального target design:
 
-Отзывы поступают сразу из нескольких источников: App Store, Google Play, система поддержки (например, Zendesk), опросы по методике NPS. По данным отчёта Alchemer Mobile / Apptentive ("Бенчмарк вовлечённости в мобильных приложениях", 2021 год, выборка - 1 000 iOS‑ и Android‑приложений с более чем 1 миллиардом установок), ситуация следующая:
+- `api`: FastAPI-приложение, которое одновременно отдаёт HTTP API и статический frontend.
+- `worker`: отдельный Python worker для очереди jobs.
+- `storage`: SQLite + локальные файлы артефактов + persisted retrieval index на диске.
+- `frontend`: статический UI, встроенный в web service.
 
-- среднее Android‑приложение с аудиторией от 5 000 активных пользователей собирает **2 586 отзывов**;
-- среднее iOS‑приложение - **455 отзывов**.
+Это сделано сознательно ради PoC и будущего деплоя с минимальным operational overhead. Логические границы модулей из проектной документации сохранены, но контейнерная топология упрощена.
 
-Если у продукта несколько каналов сбора обратной связи и растущая аудитория, каждую неделю команда получает сотни новых сообщений.
+Для hosted deployment в репозитории также подготовлен single-service профиль:
 
-Анализировать такой объём вручную практически невозможно. Согласно опросу Pragmatic Institute (2019 год, около 2 500 продуктовых специалистов, результаты опубликованы Pendo), **74 % продакт‑менеджеров тратят меньше 5 часов в месяц на прямое общение с пользователями** - хотя рекомендуемая норма составляет 8 часов в неделю.
+- `api + embedded worker`: один web-service process с фоновым worker thread.
+- `storage`: Railway volume, автоматически подхватываемый через `RAILWAY_VOLUME_MOUNT_PATH`.
+- `port binding`: приложение понимает как `PFIA_PORT`, так и platform-provided `PORT`.
 
-По данным Product Management Festival (2019 год, более 1 000 респондентов по всему миру), продакт‑менеджеры в среднем уделяют **всего 7,2 % рабочего времени общению с клиентами** - это примерно 3 часа при стандартной 40‑часовой рабочей неделе.
+Такой профиль удобнее для SQLite/file-based PoC, чем разнос `api` и `worker` по отдельным hosted services без общего локального диска.
 
-**К чему это приводит**
+## Быстрый Старт
 
-Важные выводы и инсайты теряются в массе данных и поступают слишком поздно. Например, по кейсу компании Atlassian (описан компанией Thematic в 2024 году), **ручная сортировка неструктурированных отзывов занимала у команды до 6 недель в квартал**. В результате ценные данные поступали уже после того, как ключевые продуктовые решения были приняты.
+### Вариант 1. Docker Compose
 
-______________________________________________________________________
+Требования:
 
-## Что именно сделает PoC на демо
+- Docker
+- Docker Compose
 
-1. **Ingestion**: загружает отзывы из файлов CSV/JSON (имитирует экспорт из App Store, Zendesk, Telegram) - до 2 000 записей за один раз.
+Запуск:
 
-1. **Preprocessing & Anonymization**: удаляет персональные данные (имена, email, телефоны), приводит тексты к единому языковому формату (русский или английский).
+```bash
+docker compose up --build
+```
 
-1. **Semantic Clustering**: группирует отзывы по тематическим кластерам с помощью векторных представлений (embedding) и суммаризации на базе большой языковой модели (LLM). Для кластеризации используется алгоритм HDBSCAN (Campello, Moulavi & Sander, 2013).
+После старта открой:
 
-1. **Priority Scoring**: рассчитывает показатель приоритета (Priority Score) для каждого кластера. Учитываются:
+- UI: `http://localhost:8000`
+- live health: `http://localhost:8000/health/live`
+- ready health: `http://localhost:8000/health/ready`
+- metrics: `http://localhost:8000/metrics`
 
-- частота упоминания темы;
-- эмоциональная окраска отзывов (тональность, анализируется с помощью инструмента VADER, Hutto & Gilbert, 2014);
-- динамика изменения количества отзывов по теме (тренд).
+`docker-compose.yml` использует `.env.example` с безопасными offline-дефолтами, так что для demo дополнительная настройка не нужна.
 
-5. **Anomaly Detection**: выявляет резкие всплески жалоб по отдельным темам - если количество жалоб превышает скользящий базовый уровень на два стандартных отклонения (+2STD от rolling baseline) - и отправляет оповещение (алерт).
+Остановка:
 
-1. **Report Generation**: создаёт структурированный отчёт в формате Markdown и краткое резюме для руководства (executive summary, не более 200 слов).
+```bash
+docker compose down -v
+```
 
-1. **Q&A Agent с tool use**: продакт‑менеджер задаёт вопрос в свободной форме. Агент самостоятельно планирует, какие инструменты вызвать и в каком порядке: `search_clusters(query)` - найти релевантные темы, `get_quotes(cluster_id, n)` - достать цитаты, `get_trend(cluster_id)` - проверить динамику, `compare_clusters(id1, id2)` - сопоставить темы. Агент итеративно вызывает инструменты до получения достаточного контекста для ответа. Это не простой RAG-запрос: LLM решает, каких данных не хватает, и запрашивает их дополнительно. Качество ответов оценивается через RAGAS (Es et al., 2024).
+### Вариант 2. Локальный Запуск Без Docker
 
-**Демонстрационный сценарий**: загружаем набор из примерно 1 500 отзывов о мобильном приложении. Система менее чем за 60 секунд выдаёт приоритизированный отчёт с топ‑10 наиболее актуальных тем, выделенных на основе анализа.
+Требования:
 
-______________________________________________________________________
+- Python 3.10+
+- виртуальное окружение
 
-## Что НЕ делает PoC, явные out-of-scope
+Установка зависимостей:
 
-| Что | Почему не входит в текущий объём работ (out‑of‑scope) |
-|------|--------------------------------------------------|
-| Live‑интеграция с App Store Connect API / Google Play Console | Требует настройки OAuth, учёта ограничений по частоте запросов (rate limiting), наличия платного аккаунта |
-| Интеграция с Jira / Linear (создание тикетов) | Запланирована на следующем этапе (milestone) после завершения PoC |
-| Поддержка нескольких продуктов / языков (больше, чем RU/EN) | Ограничена возможностями используемых embedding‑моделей |
-| Анализ удержания (retention‑анализ, связь с cohort data) | Для реализации требуется доступ к аналитическим хранилищам данных |
-| Потоковая передача данных в реальном времени (real‑time streaming, например, через Kafka / webhooks) | Для этапа PoC достаточно пакетной обработки данных (batch‑режима) |
-| Тонкая настройка (fine‑tuning) собственной модели классификации | Выходит за рамки PoC по срокам и бюджету - требует значительных временных и финансовых ресурсов |
-| Автоматическая отправка отчётов в Slack / Email | Задача второго приоритета, будет реализована позже |
+```bash
+./.venv/bin/python -m pip install -e ".[dev]"
+```
 
-______________________________________________________________________
+Запуск API:
 
-## Ключевые источники
+```bash
+PYTHONPATH=src ./.venv/bin/python -m pfia.api
+```
 
-| Источник | Год | Данные |
-|----------|------|--------|
-| Birdie.ai, "Состояние пользовательского фидбека в продуктовой разработке" ("State of Customer Feedback in Product") | 2023 | Около 50 % команд анализируют отзывы пользователей от случая к случаю (ad hoc) или не анализируют вообще |
-| Alchemer Mobile / Apptentive, "Бенчмарк вовлечённости в мобильных приложениях" ("2021 Mobile App Engagement Benchmark") | 2021 | Среднее Android‑приложение с аудиторией от 5 000 активных пользователей собирает 2 586 отзывов |
-| Pragmatic Institute / Pendo, "Тактический vs стратегический подход" ("Tactical vs. Strategic") | 2019 | 74 % продакт‑менеджеров тратят менее 5 часов в месяц на прямое взаимодействие с пользователями |
-| Thematic / кейс‑стади Atlassian | 2024 | Ручная обработка и категоризация неструктурированных отзывов занимала у команды Atlassian до 6 недель в квартал |
-| Campello и соавторы, конференция PAKDD, DOI: 10.1007/978-3-642-37456-2_14 | 2013 | Описание алгоритма кластеризации HDBSCAN |
-| Es и соавторы, конференция EACL, DOI: 10.18653/v1/2024.eacl-demo.16 | 2024 | Методика оценки качества ответов RAGAS |
-| Hutto & Gilbert, конференция ICWSM, DOI: 10.1609/icwsm.v8i1.14550 | 2014 | Инструмент для анализа тональности текста VADER (VADER sentiment) |
-| Документация платформы OpenAI, модель text‑embedding‑3‑small | 2024 | Стоимость: 0,02 доллара за 1 миллион токенов; размерность векторов - 1 536 измерений |
-| Документация платформы OpenAI, ценообразование для GPT‑4o‑mini | 2024–2026 | Стоимость: 0,15 доллара за 1 миллион входных токенов, 0,60 доллара за 1 миллион выходных токенов |
-| LangChain Inc., репозиторий github.com/langchain-ai/langgraph | 2024+ | Фреймворк LangGraph для построения рабочих процессов с языковыми моделями |
+Запуск worker в отдельном терминале:
 
-______________________________________________________________________
+```bash
+PYTHONPATH=src ./.venv/bin/python -m pfia.worker
+```
+
+Локальная симуляция hosted-профиля:
+
+```bash
+make run-embedded
+```
+
+Тесты:
+
+```bash
+./.venv/bin/python -m pytest -q
+```
+
+Есть `Makefile`:
+
+```bash
+make test
+make demo
+```
+
+## Демонстрационный Сценарий
+
+В репозитории уже лежит demo dataset:
+
+- `data/demo/mobile_app_reviews.csv`
+
+Через UI можно:
+
+1. Нажать `Run Demo Dataset`.
+1. Дождаться завершения batch-job.
+1. Посмотреть clusters, alerts и Markdown-отчёт.
+1. Задать вопрос, например:
+   - `What is the highest-priority issue and what evidence supports it?`
+   - `Compare billing issues and login code delays.`
+   - `Which topic is spiking this week?`
+
+Ожидаемый demo outcome:
+
+- top issue: `Payment flow crashes`
+- явный spike по проблемам оплаты / crash
+- Q&A отвечает grounded evidence с цитатами и cluster ids
+
+## HTTP API
+
+Основные endpoints:
+
+- `POST /api/sessions/upload` — принять CSV/JSON и создать `session` + `job`
+- `GET /api/sessions/{session_id}` — статус, clusters, alerts, report, event timeline
+- `GET /api/sessions/{session_id}/report` — report artifact
+- `POST /api/sessions/{session_id}/chat` — grounded Q&A
+- `GET /api/demo/sample-file` — скачать demo CSV
+- `GET /health/live`
+- `GET /health/ready`
+- `GET /metrics`
+
+## Что Проверено В Этом Репозитории
+
+Проверки, выполненные на текущем состоянии проекта:
+
+- `pytest`: `4 passed`
+- локальный smoke batch-flow
+- локальный smoke grounded Q&A
+- `docker compose build`
+- `docker compose up -d`
+- e2e upload → process → chat через живой Docker API
+
+## Качество И Безопасность
+
+В PoC уже заложены базовые guardrails:
+
+- batch limit: до `2000` отзывов
+- upload size limit: до `10 MB`
+- queue depth limit
+- PII masking до индексации и отчёта
+- session-scoped retrieval
+- persisted job/session state в SQLite
+- recovery после рестарта worker через re-queue in-flight jobs
+- metrics и stage events для диагностики
+
+Тестами покрыто:
+
+- полный batch-flow
+- privacy masking
+- recovery после рестарта worker
+- grounded priority Q&A
+
+## Подготовка К Будущему Деплою
+
+Почва под деплой уже подготовлена:
+
+- один и тот же image используется и для `api`, и для `worker`
+- все runtime-настройки вынесены в env vars
+- state хранится в persistent volume
+- есть health endpoints для orchestrator / platform probes
+- есть `/metrics` для Prometheus-compatible scraping
+- запуск не зависит от платных API-ключей
+- есть `railway.json` для config-as-code
+- single-service hosted mode не требует отдельного worker service
+- Railway volume path и `PORT` подхватываются автоматически
+
+### Railway-First Деплой
+
+Для самого простого hosted deployment в текущем состоянии проекта рекомендован `Railway`.
+
+В репозитории уже лежит:
+
+- `railway.json`:
+  - `DOCKERFILE` build;
+  - `numReplicas=1` из-за SQLite + file artifacts;
+  - healthcheck на `/health/ready`;
+  - обязательный mount path `/data`.
+- platform-aware runtime:
+  - если есть `RAILWAY_VOLUME_MOUNT_PATH`, приложение автоматически переносит runtime state в volume;
+  - если есть platform `PORT`, API слушает его без дополнительных флагов;
+  - если есть Railway volume, автоматически включается embedded worker.
+
+Практически это означает, что для первого деплоя позже понадобится:
+
+1. Создать Railway project из этого репозитория.
+1. Подключить один volume и смонтировать его в `/data`.
+1. Опционально добавить `OPENAI_API_KEY`, если захочется расширить PoC внешней генерацией.
+1. Сгенерировать public domain.
+
+Подробный runbook лежит в [docs/deploy/railway.md](docs/deploy/railway.md).
 
 ## Документация
 
+Проектные документы и дизайн-артефакты:
+
 - [Product Proposal](docs/product-proposal.md)
-- [Governance & Risk Register](docs/governance.md)
 - [System Design](docs/system-design.md)
-- [Architecture Diagrams](docs/diagrams/README.md)
+- [Governance](docs/governance.md)
 - [Module Specs](docs/specs/README.md)
+- [Architecture Diagrams](docs/diagrams/README.md)
+- [Railway Deploy Runbook](docs/deploy/railway.md)
+
+Важно: часть документов описывает более широкий target design, чем текущая PoC-реализация. Для сдачи ориентироваться стоит прежде всего на этот `README` и фактический код в репозитории.
