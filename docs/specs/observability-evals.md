@@ -97,6 +97,8 @@ Optional sinks:
 - проверка наличия `correlation_id` и provider events в stage log;
 - проверка, что degraded mode явно виден в отчёте и API.
 
+Минимальная автоматизация этих checks уже должна быть доступна через acceptance harness `pfia.evals`.
+
 ## Definition of done для infra-ready PoC
 
 - есть dashboard или хотя бы экспортируемый набор метрик;

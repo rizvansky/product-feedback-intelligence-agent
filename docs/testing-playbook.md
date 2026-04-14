@@ -11,11 +11,16 @@
 
 ```bash
 ./.venv/bin/python -m pytest -q
+npm --prefix frontend run build
+PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 ```
 
 Сейчас test suite покрывает:
 
 - полный deterministic batch-flow;
+- low-data mode и simple-list presentation;
+- weak-signal separation для малых кластеров;
+- mixed-language chunk processing в preprocessing;
 - privacy masking в sanitized artifacts и report;
 - recovery после рестарта worker;
 - grounded priority Q&A;
@@ -28,6 +33,16 @@
 - LLM cluster review;
 - LLM anomaly explainer;
 - session runtime metadata.
+- отдельный `Next.js` frontend как production build.
+
+Дополнительно acceptance/runtime теперь явно проверяются по proposal-aligned user-facing signals:
+
+- `presentation_mode`;
+- `low_data_mode`;
+- `weak_signal_cluster_ids`;
+- `mixed_sentiment_cluster_ids`;
+- `mixed_language_review_count`;
+- sections `Weak Signals`, `Low Data Mode`, `Simple List View` и `Top quotes` в Markdown report.
 
 ## 2. Локальный deterministic smoke
 
@@ -50,6 +65,7 @@ python check.py
 - `orchestrator_backend_effective=langgraph`;
 - `generation_backend_effective=local`;
 - `retrieval_backend_effective=chroma`;
+- `chroma_mode_effective=embedded`, если сервис запущен без внешнего Chroma HTTP service;
 - `pii_backend_effective=regex`, если `spaCy`-модели отдельно не устанавливались;
 - `trace_correlation_id` непустой;
 - `trace_exporters_effective` содержит `local-jsonl`;
@@ -90,6 +106,7 @@ python check.py
 - `generation_backend_effective=openai`, `mistral`, `anthropic` или `mixed`;
 - `trace_exporters_effective` содержит `local-jsonl`, а при внешних sinks может также содержать `langsmith` и/или `otlp`;
 - `retrieval_backend_effective=chroma`;
+- `chroma_mode_effective=embedded` или `http`;
 - в runtime metadata появляются `trace_correlation_id`, `llm_call_count`, `embedding_call_count` и token totals;
 - в `runtime_metadata.agent_usage` видны `mode=openai`, `mode=mistral` или `mode=anthropic` хотя бы у части batch-агентов;
 - chat возвращает `degraded_mode=false`.
@@ -139,10 +156,37 @@ python check.py \
 
 - `INPUT_FILENAME` должен совпадать с твоим файлом;
 - `TOP_CLUSTER_IDS` должны отличаться, если меняется сам датасет;
+- `PRESENTATION_MODE` должен становиться `simple_list`, если загрузить меньше 30 отзывов;
+- `WEAK_SIGNAL_CLUSTER_IDS` должны появляться при batch'ах с малыми темами по 2-3 отзыва;
+- `MIXED_LANGUAGE_REVIEW_COUNT` должен расти, если в батче есть RU+EN отзывы в одном тексте;
 - `records_total` и `records_kept` меняются вместе с файлом;
 - содержимое report и Q&A должно зависеть от реально загруженного текста.
 
 ## 6. UI / API proof points
+
+### Frontend build proof
+
+```bash
+npm --prefix frontend run build
+```
+
+Что ожидается:
+
+- `next build` завершается без type errors;
+- output содержит route `/`;
+- build не требует включённого backend, потому что browser traffic идёт через rewrite proxy только в runtime.
+
+### Acceptance harness proof
+
+```bash
+PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
+```
+
+Что ожидается:
+
+- итоговый JSON содержит `"passed": true`;
+- среди checks есть `batch_flow_completed`, `pii_masking_regression`, `retrieval_eval_fixed_questions`, `recovery_eval`;
+- harness можно запускать как на demo dataset, так и на другом файле через `--dataset`.
 
 Для session detail:
 

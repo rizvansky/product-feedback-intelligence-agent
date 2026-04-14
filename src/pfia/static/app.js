@@ -138,6 +138,11 @@ function renderSession(payload) {
     job,
     preprocessing_summary: summary,
     clusters,
+    top_clusters: topClusters = [],
+    weak_signals: weakSignals = [],
+    simple_list_reviews: simpleListReviews = [],
+    presentation_mode: presentationMode = "clustered",
+    warnings = [],
     alerts,
     report,
     events,
@@ -154,7 +159,9 @@ function renderSession(payload) {
     <div><strong>Job:</strong> <code>${job.job_id}</code></div>
     <div><strong>Current stage:</strong> ${job.stage}</div>
     <div><strong>Failure code:</strong> ${session.failure_code || "n/a"}</div>
+    <div><strong>Presentation mode:</strong> ${presentationMode}</div>
     ${runtimeSummary}
+    ${warnings.map((warning) => `<div class="inline-message">${warning}</div>`).join("")}
   `;
 
   summaryMetrics.innerHTML = summary
@@ -162,13 +169,17 @@ function renderSession(payload) {
         metric("Reviews kept", summary.kept_records),
         metric("Duplicates", summary.duplicate_records),
         metric("Quarantined", summary.quarantined_records),
-        metric("Clusters", clusters.length),
+        metric("Clusters", topClusters.length || clusters.length),
       ].join("")
     : "";
 
-  clustersEl.innerHTML = clusters.length
-    ? clusters.slice(0, 10).map((cluster) => renderCluster(cluster, alerts)).join("")
-    : `<div class="cluster-card muted">Clusters will appear here after analysis.</div>`;
+  clustersEl.innerHTML = renderFindings({
+    presentationMode,
+    topClusters,
+    weakSignals,
+    simpleListReviews,
+    alerts,
+  });
 
   reportOutput.textContent = report?.markdown || "The report will appear here after the job completes.";
   eventsEl.innerHTML = events.length ? events.map(renderEvent).join("") : `<div class="event muted">No events yet.</div>`;
@@ -193,6 +204,52 @@ function renderCluster(cluster, alerts) {
       ${alert ? `<div class="inline-message">Alert: ${alert.reason}</div>` : ""}
     </article>
   `;
+}
+
+function renderReviewPreview(review) {
+  return `
+    <article class="cluster-card">
+      <div class="cluster-header">
+        <div>
+          <div class="cluster-id">${review.review_id}</div>
+          <h3>${review.source}</h3>
+        </div>
+        <div class="badge">${review.language}</div>
+      </div>
+      <div class="cluster-summary">${review.text}</div>
+      <div class="muted">${review.created_at} · flags: ${(review.flags || []).join(", ") || "none"}</div>
+    </article>
+  `;
+}
+
+function renderFindings({
+  presentationMode,
+  topClusters,
+  weakSignals,
+  simpleListReviews,
+  alerts,
+}) {
+  const topMarkup = topClusters.length
+    ? topClusters.map((cluster) => renderCluster(cluster, alerts)).join("")
+    : `<div class="cluster-card muted">No top thematic clusters were promoted for this batch.</div>`;
+  const weakMarkup = weakSignals.length
+    ? `
+      <div class="panel-subtitle">Weak signals</div>
+      ${weakSignals.map((cluster) => renderCluster(cluster, alerts)).join("")}
+    `
+    : "";
+  if (presentationMode === "simple_list") {
+    const listMarkup = simpleListReviews.length
+      ? simpleListReviews.map(renderReviewPreview).join("")
+      : `<div class="cluster-card muted">No anonymized review previews are available.</div>`;
+    return `
+      <div class="inline-message">Low-data mode is active, so PFIA shows the sanitized review list first.</div>
+      ${listMarkup}
+      ${topClusters.length ? `<div class="panel-subtitle">Provisional themes</div>${topMarkup}` : ""}
+      ${weakMarkup}
+    `;
+  }
+  return `${topMarkup}${weakMarkup}`;
 }
 
 function renderEvent(item) {
@@ -234,6 +291,8 @@ function renderRuntimeMeta(runtimeMetadata) {
 
   return `
     <div><strong>Runtime profile:</strong> ${runtimeMetadata.runtime_profile}</div>
+    <div><strong>Presentation mode:</strong> ${runtimeMetadata.presentation_mode}</div>
+    <div><strong>Low data mode:</strong> ${runtimeMetadata.low_data_mode ? "yes" : "no"}</div>
     <div><strong>Trace correlation id:</strong> <code>${runtimeMetadata.trace_correlation_id}</code></div>
     <div><strong>Trace exporters:</strong> ${(runtimeMetadata.trace_exporters_effective || []).join(", ") || "n/a"}</div>
     <div><strong>Local trace path:</strong> <code>${runtimeMetadata.trace_local_path || "n/a"}</code></div>
@@ -245,6 +304,8 @@ function renderRuntimeMeta(runtimeMetadata) {
     <div><strong>Embedding model:</strong> ${runtimeMetadata.embedding_model_effective || "n/a"}</div>
     <div><strong>Generation backend:</strong> ${runtimeMetadata.generation_backend_effective} (requested: ${runtimeMetadata.generation_backend_requested})</div>
     <div><strong>Retrieval backend:</strong> ${runtimeMetadata.retrieval_backend_effective} (requested: ${runtimeMetadata.retrieval_backend_requested})</div>
+    <div><strong>Chroma mode:</strong> ${runtimeMetadata.chroma_mode_effective || "n/a"}</div>
+    <div><strong>Chroma endpoint:</strong> <code>${runtimeMetadata.chroma_endpoint_effective || runtimeMetadata.chroma_persist_dir || "n/a"}</code></div>
     <div><strong>Primary model:</strong> ${runtimeMetadata.llm_primary_model || "n/a"}</div>
     <div><strong>LLM calls:</strong> ${runtimeMetadata.llm_call_count || 0}</div>
     <div><strong>Embedding calls:</strong> ${runtimeMetadata.embedding_call_count || 0}</div>
@@ -254,6 +315,9 @@ function renderRuntimeMeta(runtimeMetadata) {
     <div><strong>Fallback providers:</strong> Mistral=${runtimeMetadata.mistral_fallback_enabled ? "on" : "off"}, Anthropic=${runtimeMetadata.anthropic_fallback_enabled ? "on" : "off"}</div>
     <div><strong>Input file:</strong> <code>${runtimeMetadata.input_filename || "n/a"}</code></div>
     <div><strong>Run shape:</strong> ${runtimeMetadata.records_kept}/${runtimeMetadata.records_total} kept, ${runtimeMetadata.top_cluster_ids.length} top clusters</div>
+    <div><strong>Weak signals:</strong> ${runtimeMetadata.weak_signal_count || 0}</div>
+    <div><strong>Mixed sentiment clusters:</strong> ${runtimeMetadata.mixed_sentiment_cluster_count || 0}</div>
+    <div><strong>Mixed-language reviews:</strong> ${runtimeMetadata.mixed_language_review_count || 0}</div>
     <div><strong>Chroma dir:</strong> <code>${runtimeMetadata.chroma_persist_dir || "n/a"}</code></div>
     <div><strong>Agents used:</strong> ${usedAgents.length ? usedAgents.join(", ") : "deterministic-only path"}</div>
   `;

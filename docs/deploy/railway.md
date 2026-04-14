@@ -1,6 +1,8 @@
 # Railway Deploy Runbook
 
-Этот runbook описывает рекомендуемый hosted deploy для текущего PoC: один Railway web service + один persistent volume. Для этого проекта это лучший operational tradeoff, потому что runtime state хранится в SQLite, report artifacts и persistent Chroma storage на локальном диске.
+Этот runbook описывает рекомендуемый hosted deploy: один Railway web service + один persistent volume. Для этого проекта это хороший operational tradeoff, потому что runtime state хранится в SQLite, report artifacts и persistent Chroma storage на локальном диске.
+
+Репозиторий также поддерживает расширенный hosted профиль с отдельными сервисами для `frontend` и `chroma`. Ниже сначала описан быстрый single-service rollout, затем optional multi-service расширения.
 
 ## Целевой Профиль
 
@@ -145,6 +147,39 @@
 1. Проверить, что report, clusters и runtime metadata отрисовались.
 1. В Q&A спросить: `What is the highest-priority issue and what evidence supports it?`
 
+## Optional Frontend Service
+
+Если нужен hosted профиль с отдельным `Next.js` frontend:
+
+1. Создать второй Railway service из поддиректории `frontend/`.
+1. В variables frontend service задать:
+   - `NEXT_PUBLIC_PFIA_API_BASE_URL=/pfia`
+   - `PFIA_INTERNAL_API_BASE_URL=http://<backend-private-domain-or-service-name>:8080`
+1. Сгенерировать public domain уже для frontend service.
+1. Backend service оставить приватным или использовать только для health/API smoke.
+
+Смысл такой схемы:
+
+- browser остаётся на frontend domain;
+- Next.js proxy переправляет `/pfia/*` на внутренний backend URL;
+- CORS не нужен, потому что browser всё ещё работает same-origin через frontend.
+
+## Optional Chroma Service
+
+Если нужен hosted профиль с отдельным `Chroma` service:
+
+1. Создать отдельный Railway service под `Chroma`.
+1. На backend service задать:
+   - `PFIA_RETRIEVAL_BACKEND=chroma`
+   - `PFIA_CHROMA_MODE=http`
+   - `PFIA_CHROMA_HOST=<private chroma hostname>`
+   - `PFIA_CHROMA_PORT=<private chroma port>`
+   - `PFIA_CHROMA_SSL=false`
+1. Проверить после batch-run, что в `runtime_metadata`:
+   - `retrieval_backend_effective=chroma`
+   - `chroma_mode_effective=http`
+   - `chroma_endpoint_effective` указывает на private service endpoint
+
 ## Ограничения Текущего Hosted Профиля
 
 - не масштабировать выше `1` реплики
@@ -155,6 +190,7 @@
 
 Когда этот профиль будет стабильно работать, можно переходить к следующему уровню:
 
+- отдельный Railway service для `frontend/` с `PFIA_INTERNAL_API_BASE_URL` до backend service;
 - custom domain
 - managed Postgres вместо SQLite
 - object storage вместо локальных артефактов

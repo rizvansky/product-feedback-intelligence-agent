@@ -258,6 +258,15 @@ textarea {
   color: var(--muted);
 }
 
+.panel-subtitle {
+  margin: 16px 0 8px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
 .cluster-summary,
 .report-box,
 .answer-pre {

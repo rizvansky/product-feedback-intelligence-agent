@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,36 @@ def detect_injection(text: str) -> bool:
     return any(pattern.search(text) for pattern in INJECTION_PATTERNS)
 
 
+def detect_language_chunks(text: str) -> list[dict[str, Any]]:
+    """Split text into coarse chunks and detect language per chunk.
+
+    Args:
+        text: Raw review text.
+
+    Returns:
+        Ordered chunk descriptors with per-chunk language metadata.
+    """
+    parts = [
+        segment.strip()
+        for segment in re.split(r"(?<=[.!?;])\s+|\n+", text)
+        if normalize_text(segment)
+    ]
+    if not parts:
+        normalized = normalize_text(text)
+        if not normalized:
+            return []
+        parts = [normalized]
+    return [
+        {
+            "text": part,
+            "language": detect_language(part),
+            "char_count": len(part),
+            "token_count": len([token for token in re.split(r"\W+", part) if token]),
+        }
+        for part in parts
+    ]
+
+
 def is_low_information(text: str) -> bool:
     """Detect reviews that are too short for meaningful analysis.
 
@@ -81,6 +112,28 @@ def is_low_information(text: str) -> bool:
     return len(tokens) < 3 or len(text) < 12
 
 
+def perplexity_proxy(text: str) -> float:
+    """Estimate a lightweight perplexity-like score for spam filtering.
+
+    Args:
+        text: Review text.
+
+    Returns:
+        Character-level perplexity proxy where lower values imply highly repetitive text.
+    """
+    characters = [char.lower() for char in text if not char.isspace()]
+    if len(characters) < 8:
+        return 1.0
+    counts: dict[str, int] = {}
+    for char in characters:
+        counts[char] = counts.get(char, 0) + 1
+    total = len(characters)
+    entropy = -sum(
+        (count / total) * math.log2(count / total) for count in counts.values()
+    )
+    return float(2**entropy)
+
+
 def is_spam(text: str) -> bool:
     """Detect simple spam signals in a review.
 
@@ -91,7 +144,73 @@ def is_spam(text: str) -> bool:
         ``True`` when the text matches spam-like heuristics.
     """
     lowered = text.lower()
-    return lowered.count("http") > 2 or re.search(r"(.)\1{6,}", lowered) is not None
+    tokens = [token for token in re.split(r"\W+", lowered) if token]
+    unique_ratio = len(set(tokens)) / max(1, len(tokens))
+    low_perplexity = perplexity_proxy(lowered) < 3.2
+    return (
+        lowered.count("http") > 2
+        or re.search(r"(.)\1{6,}", lowered) is not None
+        or (len(tokens) >= 6 and unique_ratio < 0.35)
+        or (len(tokens) >= 8 and low_perplexity)
+    )
+
+
+def _mask_text_with_language_chunks(
+    text: str, language: str, settings: Settings
+) -> tuple[str, int, list[dict[str, Any]], str]:
+    """Mask text with chunk-level language awareness for mixed-language reviews.
+
+    Args:
+        text: Raw input text.
+        language: Coarse language bucket for the full review.
+        settings: Runtime settings controlling the privacy backend.
+
+    Returns:
+        Tuple of masked text, pii hits, sanitized chunk metadata, and effective backend.
+    """
+    if language != "mixed":
+        pii_result = mask_pii(text, language, settings)
+        return (
+            pii_result.masked_text,
+            pii_result.pii_hits,
+            [],
+            pii_result.backend_effective,
+        )
+
+    chunk_payload: list[dict[str, Any]] = []
+    masked_segments: list[str] = []
+    total_hits = 0
+    backends_used: set[str] = set()
+    for chunk in detect_language_chunks(text):
+        chunk_language = str(chunk.get("language") or "unknown")
+        chunk_text = str(chunk.get("text") or "")
+        pii_result = mask_pii(chunk_text, chunk_language, settings)
+        masked_segments.append(pii_result.masked_text)
+        total_hits += pii_result.pii_hits
+        backends_used.add(pii_result.backend_effective)
+        chunk_payload.append(
+            {
+                "language": chunk_language,
+                "char_count": int(chunk.get("char_count") or len(chunk_text)),
+                "token_count": int(chunk.get("token_count") or 0),
+            }
+        )
+    if not masked_segments:
+        pii_result = mask_pii(text, language, settings)
+        return (
+            pii_result.masked_text,
+            pii_result.pii_hits,
+            [],
+            pii_result.backend_effective,
+        )
+    backend_effective = (
+        backends_used.pop()
+        if len(backends_used) == 1
+        else "regex+spacy"
+        if "regex+spacy" in backends_used
+        else "regex"
+    )
+    return " ".join(masked_segments), total_hits, chunk_payload, backend_effective
 
 
 def _parse_csv(content: bytes) -> list[dict[str, Any]]:
@@ -203,9 +322,9 @@ def preprocess_upload(
         language = normalize_text(str(raw_record.get("language", ""))).lower()
         text_raw = normalize_text(str(raw_record["text"]))
         language = language or detect_language(text_raw)
-        pii_result = mask_pii(text_raw, language, settings)
-        text_masked = pii_result.masked_text
-        hits = pii_result.pii_hits
+        text_masked, hits, language_chunks, pii_backend_effective = (
+            _mask_text_with_language_chunks(text_raw, language, settings)
+        )
         pii_hits += hits
         if language == "unknown":
             unsupported_language_records += 1
@@ -221,6 +340,8 @@ def preprocess_upload(
             low_information_records += 1
         if hits:
             flags.append("pii_found")
+        if language == "mixed":
+            flags.append("mixed_language")
 
         text_for_hash = normalize_text(text_masked.lower())
         dedupe_hash = hashlib.sha256(text_for_hash.encode("utf-8")).hexdigest()
@@ -248,7 +369,9 @@ def preprocess_upload(
             metadata={
                 "raw_index": index,
                 "ingested_from": upload_path.name,
-                "pii_backend_effective": pii_result.backend_effective,
+                "pii_backend_effective": pii_backend_effective,
+                "mixed_language_processed": language == "mixed",
+                "language_chunks": language_chunks,
             },
         )
         reviews.append(review)

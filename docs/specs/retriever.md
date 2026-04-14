@@ -1,6 +1,6 @@
 # Retriever
 
-> Примечание по текущему runtime: в коде репозитория retriever уже использует persistent Chroma collections (`reviews_vector`, `clusters_vector`) внутри основного application runtime. SQLite остаётся source of truth для state, а session pickle payload хранит lexical fallback, trends, report sections и сериализованные vectorizers/projectors на случай деградации Chroma.
+Retriever использует persistent Chroma collections (`reviews_vector`, `clusters_vector`) либо через embedded persistent client, либо через отдельный `chroma` HTTP-service. SQLite остаётся source of truth для state, а session pickle payload хранит lexical fallback, trends, report sections и сериализованные vectorizers/projectors на случай деградации Chroma.
 
 ## Назначение
 

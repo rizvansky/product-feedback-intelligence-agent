@@ -50,9 +50,10 @@
 1. Нормализация кодировки и временных полей.
 1. Удаление полных дубликатов по `dedupe_hash`.
 1. Детекция языка.
+1. Для `mixed`-отзывов - chunk-level language detection и segment-wise masking.
 1. PII masking через regex + optional spaCy NER (`ru_core_news_sm` / `en_core_web_sm`).
 1. Injection scan по сигнатурам и длине.
-1. Эвристика low-information / spam.
+1. Эвристика low-information / spam, включая perplexity-like proxy для повторяющегося мусора.
 1. Запись sanitized JSONL на локальный volume.
 
 ## Ограничения
@@ -60,7 +61,7 @@
 - Если обязательное поле отсутствует более чем у 1 % записей, job завершается ошибкой.
 - Если после PII scan остаются неподтверждённые потенциальные PII, записи уходят в quarantine.
 - Если quarantine превышает 5 % batch, job переводится в `FAILED_PRIVACY`.
-- Mixed-language записи допускаются, но маркируются флагом `mixed`.
+- Mixed-language записи допускаются, обрабатываются chunk-level и маркируются флагом `mixed_language`.
 
 ## Latency budget
 

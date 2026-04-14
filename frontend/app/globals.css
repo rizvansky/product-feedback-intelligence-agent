@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply min-h-screen bg-canvas font-body text-ink antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(15, 124, 130, 0.18), transparent 28rem),
+    radial-gradient(circle at top right, rgba(181, 77, 42, 0.16), transparent 24rem),
+    linear-gradient(180deg, #f7f2e7 0%, #f2ead9 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+pre {
+  white-space: pre-wrap;
+}

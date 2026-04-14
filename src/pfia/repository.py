@@ -15,6 +15,7 @@ from pfia.models import (
     PreprocessingSummary,
     QuoteRecord,
     ReportArtifact,
+    ReviewPreview,
     ReviewNormalized,
     SessionDetail,
     SessionRuntimeMetadata,
@@ -544,6 +545,8 @@ class Repository:
             return None
         payload = _json_loads(row["payload_json"], {})
         payload.setdefault("trace_correlation_id", "n/a")
+        payload.setdefault("presentation_mode", "clustered")
+        payload.setdefault("low_data_mode", False)
         payload.setdefault("trace_exporters_effective", [])
         payload.setdefault("trace_local_path", None)
         payload.setdefault("pii_backend_requested", "regex")
@@ -558,6 +561,13 @@ class Repository:
         payload.setdefault("embedding_input_tokens_total", 0)
         payload.setdefault("estimated_cost_usd", 0.0)
         payload.setdefault("provider_usage_summary", {})
+        payload.setdefault("weak_signal_cluster_ids", [])
+        payload.setdefault("weak_signal_count", 0)
+        payload.setdefault("mixed_sentiment_cluster_ids", [])
+        payload.setdefault("mixed_sentiment_cluster_count", 0)
+        payload.setdefault("mixed_language_review_count", 0)
+        payload.setdefault("chroma_mode_effective", None)
+        payload.setdefault("chroma_endpoint_effective", None)
         return SessionRuntimeMetadata.model_validate(payload)
 
     def get_quotes_for_cluster(
@@ -684,14 +694,63 @@ class Repository:
         job = self.get_job_by_session(session_id)
         if job is None:
             raise KeyError(f"No job linked to session_id: {session_id}")
+        runtime_metadata = self.get_runtime_metadata(session_id)
+        clusters = self.get_clusters(session_id)
+        weak_signal_ids = set(
+            runtime_metadata.weak_signal_cluster_ids if runtime_metadata else []
+        )
+        top_clusters = [
+            cluster for cluster in clusters if cluster.cluster_id not in weak_signal_ids
+        ]
+        weak_signals = [
+            cluster for cluster in clusters if cluster.cluster_id in weak_signal_ids
+        ]
+        reviews = self.get_reviews(session_id)
+        simple_list_reviews = [
+            ReviewPreview(
+                review_id=review.review_id,
+                source=review.source,
+                created_at=review.created_at,
+                language=review.language,
+                text=review.text_anonymized,
+                flags=review.flags,
+                cluster_id=next(
+                    (
+                        cluster.cluster_id
+                        for cluster in clusters
+                        if review.review_id in cluster.review_ids
+                    ),
+                    None,
+                ),
+            )
+            for review in reviews
+        ]
+        warnings: list[str] = []
+        if runtime_metadata and runtime_metadata.low_data_mode:
+            warnings.append(
+                "Low-data mode is active because fewer than 30 reviews were uploaded."
+            )
+        if weak_signals:
+            warnings.append(
+                f"{len(weak_signals)} weak-signal clusters were excluded from the top themes."
+            )
         return SessionDetail(
             session=session,
             job=job,
             preprocessing_summary=self.get_preprocessing_summary(session_id),
-            clusters=self.get_clusters(session_id),
+            clusters=clusters,
+            top_clusters=top_clusters,
+            weak_signals=weak_signals,
+            simple_list_reviews=simple_list_reviews,
+            presentation_mode=(
+                runtime_metadata.presentation_mode
+                if runtime_metadata is not None
+                else "clustered"
+            ),
+            warnings=warnings,
             alerts=self.get_alerts(session_id),
             report=self.get_report(session_id),
-            runtime_metadata=self.get_runtime_metadata(session_id),
+            runtime_metadata=runtime_metadata,
         )
 
     def list_recovery_jobs(self) -> list[JobRecord]:

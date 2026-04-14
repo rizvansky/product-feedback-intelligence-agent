@@ -19,6 +19,8 @@
 - persistent Railway volume;
 - SQLite + persistent Chroma retrieval + session fallback index.
 
+В репозитории есть как multi-service профиль с отдельным `Next.js` frontend, так и hosted single-service профиль для быстрого публичного демо. Текущий Railway URL развёрнут в single-service режиме.
+
 ## Quick Check
 
 Проверка должна занимать 1-2 минуты:
@@ -28,6 +30,8 @@
 1. Дождаться статуса `COMPLETED`.
 1. Убедиться, что в UI отобразились:
    - clusters;
+   - weak signals, если они появились;
+   - simple list view для low-data batch'ей;
    - Markdown report;
    - timeline событий.
    - runtime metadata.
@@ -47,10 +51,13 @@
 Дополнительно после завершения batch-run в UI и `GET /api/sessions/{session_id}` видны:
 
 - `runtime_profile`
+- `presentation_mode`
 - effective orchestrator backend
 - effective generation backend
 - effective retrieval backend
 - input filename
+- weak signal ids
+- mixed sentiment ids
 - per-agent usage snapshot
 
 ## Health Endpoints

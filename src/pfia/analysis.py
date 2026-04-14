@@ -213,6 +213,10 @@ def analyze_reviews(
     concepts_by_review = {
         review.review_id: detect_concepts(review.text_anonymized) for review in reviews
     }
+    low_data_mode = len(reviews) < settings.low_data_review_threshold
+    mixed_language_review_count = sum(
+        1 for review in reviews if review.language == "mixed"
+    )
     texts = [
         enriched_text(review.text_anonymized, concepts_by_review[review.review_id])
         for review in reviews
@@ -244,15 +248,19 @@ def analyze_reviews(
         degraded_mode = True
     else:
         degraded_mode = quality < settings.clustering_similarity_threshold
+    degraded_mode = degraded_mode or low_data_mode
 
     temp_cluster_by_review, grouped = _group_labels(reviews, labels)
-    cluster_details, temp_to_final_cluster = _build_clusters(
+    cluster_details, temp_to_final_cluster, cluster_annotations = _build_clusters(
         session_id=session_id,
         reviews=reviews,
         grouped=grouped,
         sentiment_by_review=sentiment_by_review,
         concepts_by_review=concepts_by_review,
         degraded_mode=degraded_mode,
+        low_data_mode=low_data_mode,
+        weak_signal_max_cluster_size=settings.weak_signal_max_cluster_size,
+        quote_limit=settings.report_quotes_per_cluster,
         top_n=settings.report_top_clusters,
     )
     cluster_by_review = {
@@ -279,7 +287,24 @@ def analyze_reviews(
         diagnostics={
             "quality_score": quality,
             "total_clusters": len(enriched_clusters),
-            "degraded_reason": "low_clustering_quality" if degraded_mode else None,
+            "low_data_mode": low_data_mode,
+            "low_data_review_threshold": settings.low_data_review_threshold,
+            "weak_signal_cluster_ids": cluster_annotations["weak_signal_cluster_ids"],
+            "weak_signal_cluster_count": len(
+                cluster_annotations["weak_signal_cluster_ids"]
+            ),
+            "mixed_sentiment_cluster_ids": cluster_annotations[
+                "mixed_sentiment_cluster_ids"
+            ],
+            "mixed_sentiment_cluster_count": len(
+                cluster_annotations["mixed_sentiment_cluster_ids"]
+            ),
+            "mixed_language_review_count": mixed_language_review_count,
+            "degraded_reason": (
+                "low_data_mode"
+                if low_data_mode
+                else ("low_clustering_quality" if degraded_mode else None)
+            ),
             "sentiment_backend_effective": (
                 sentiment_backends_used[0]
                 if len(sentiment_backends_used) == 1
@@ -572,8 +597,11 @@ def _build_clusters(
     sentiment_by_review: dict[str, float],
     concepts_by_review: dict[str, list[str]],
     degraded_mode: bool,
+    low_data_mode: bool,
+    weak_signal_max_cluster_size: int,
+    quote_limit: int,
     top_n: int,
-) -> tuple[list[ClusterRecord], dict[str, str]]:
+) -> tuple[list[ClusterRecord], dict[str, str], dict[str, list[str]]]:
     """Build ranked cluster records from grouped reviews.
 
     Args:
@@ -583,10 +611,14 @@ def _build_clusters(
         sentiment_by_review: Precomputed sentiment scores.
         concepts_by_review: Concept tags per review.
         degraded_mode: Whether the run is already considered degraded.
+        low_data_mode: Whether the batch should be treated as low-data mode.
+        weak_signal_max_cluster_size: Cluster size cutoff for weak signals.
+        quote_limit: Number of quote ids to keep for reporting.
         top_n: Reserved for future result limiting.
 
     Returns:
-        Final cluster records and mapping from temporary to final cluster ids.
+        Final cluster records, mapping from temporary to final cluster ids, and
+        cluster-level annotations used by report/UI presentation.
     """
     _ = session_id, top_n
     total_reviews = len(reviews)
@@ -595,6 +627,8 @@ def _build_clusters(
 
     clusters: list[ClusterRecord] = []
     temp_to_final_cluster: dict[str, str] = {}
+    weak_signal_cluster_ids: list[str] = []
+    mixed_sentiment_cluster_ids: list[str] = []
     for group_index, (cluster_key, cluster_reviews) in enumerate(
         sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0])),
         start=1,
@@ -621,23 +655,44 @@ def _build_clusters(
         priority_score = round(
             (0.5 * freq_norm) + (0.3 * abs(sentiment)) + (0.2 * trend_delta_norm), 4
         )
-        quote_ids = _select_top_quote_ids(cluster_reviews, sentiment_by_review)
+        quote_ids = _select_top_quote_ids(
+            cluster_reviews, sentiment_by_review, limit=quote_limit
+        )
         sources = sorted({review.source for review in cluster_reviews})
+        mixed_sentiment = _has_mixed_sentiment(cluster_reviews, sentiment_by_review)
+        is_weak_signal = (
+            cluster_key == "weak_signals"
+            or len(cluster_reviews) <= weak_signal_max_cluster_size
+        )
         confidence = (
             "low"
-            if degraded_mode or cluster_key == "weak_signals"
+            if degraded_mode or is_weak_signal
             else _confidence_for_cluster(cluster_reviews)
         )
         degraded_reason = (
-            "low_clustering_quality"
-            if degraded_mode
-            else ("weak_signals_mode" if cluster_key == "weak_signals" else None)
+            "low_data_mode"
+            if low_data_mode
+            else (
+                "low_clustering_quality"
+                if degraded_mode
+                else ("weak_signals_mode" if is_weak_signal else None)
+            )
         )
         summary = _build_cluster_summary(
-            label, cluster_reviews, total_reviews, sentiment, trend_delta, sources
+            label,
+            cluster_reviews,
+            total_reviews,
+            sentiment,
+            trend_delta,
+            sources,
+            mixed_sentiment=mixed_sentiment,
         )
         final_cluster_id = f"{slugify(label)}_{group_index}"
         temp_to_final_cluster[cluster_key] = final_cluster_id
+        if is_weak_signal:
+            weak_signal_cluster_ids.append(final_cluster_id)
+        if mixed_sentiment:
+            mixed_sentiment_cluster_ids.append(final_cluster_id)
         clusters.append(
             ClusterRecord(
                 cluster_id=final_cluster_id,
@@ -670,7 +725,14 @@ def _build_clusters(
         for temp_key, final_cluster_id in temp_to_final_cluster.items()
         if final_cluster_id in final_ids
     }
-    return final_clusters, filtered_mapping
+    return (
+        final_clusters,
+        filtered_mapping,
+        {
+            "weak_signal_cluster_ids": weak_signal_cluster_ids,
+            "mixed_sentiment_cluster_ids": mixed_sentiment_cluster_ids,
+        },
+    )
 
 
 def _extract_keywords(texts: list[str]) -> list[str]:
@@ -738,6 +800,8 @@ def _build_cluster_summary(
     sentiment: float,
     trend_delta: float,
     sources: list[str],
+    *,
+    mixed_sentiment: bool,
 ) -> str:
     """Render a short natural-language summary for one cluster.
 
@@ -748,6 +812,7 @@ def _build_cluster_summary(
         sentiment: Mean sentiment score for the cluster.
         trend_delta: Relative week-over-week delta.
         sources: Distinct review sources represented in the cluster.
+        mixed_sentiment: Whether the cluster mixes clearly positive and negative reviews.
 
     Returns:
         Human-readable summary sentence.
@@ -758,10 +823,38 @@ def _build_cluster_summary(
     )
     trend_note = "spiking" if trend_delta > 0.5 else "stable"
     source_note = ", ".join(sources[:3])
+    mixed_language = any(review.language == "mixed" for review in cluster_reviews)
+    sentiment_note = (
+        "mixed sentiment with both praise and complaints"
+        if mixed_sentiment
+        else f"{mood} sentiment"
+    )
+    language_note = (
+        " Includes chunk-level RU+EN processing for mixed-language feedback."
+        if mixed_language
+        else ""
+    )
     return (
         f"Theme '{label}' covers {len(cluster_reviews)} reviews ({share:.1f}% of the batch), "
-        f"shows {mood} sentiment, and looks {trend_note}. Sources: {source_note}."
+        f"shows {sentiment_note}, and looks {trend_note}. Sources: {source_note}."
+        f"{language_note}"
     )
+
+
+def _has_mixed_sentiment(
+    cluster_reviews: list[ReviewNormalized], sentiment_by_review: dict[str, float]
+) -> bool:
+    """Return whether a cluster mixes clearly positive and negative reviews."""
+
+    positive = any(
+        sentiment_by_review.get(review.review_id, 0.0) > 0.12
+        for review in cluster_reviews
+    )
+    negative = any(
+        sentiment_by_review.get(review.review_id, 0.0) < -0.12
+        for review in cluster_reviews
+    )
+    return positive and negative
 
 
 def _compute_trend_delta(cluster_reviews: list[ReviewNormalized]) -> float:
@@ -800,6 +893,28 @@ def _confidence_for_cluster(cluster_reviews: list[ReviewNormalized]) -> str:
     if size >= 4:
         return "medium"
     return "low"
+
+
+def partition_clusters_for_display(
+    clusters: list[ClusterRecord], weak_signal_cluster_ids: list[str]
+) -> tuple[list[ClusterRecord], list[ClusterRecord]]:
+    """Split clusters into top themes and weak signals for presentation.
+
+    Args:
+        clusters: All cluster records for the session.
+        weak_signal_cluster_ids: Cluster ids that should be presented as weak signals.
+
+    Returns:
+        Tuple of ``(top_clusters, weak_signals)`` preserving ranking order.
+    """
+    weak_signal_ids = set(weak_signal_cluster_ids)
+    top_clusters = [
+        cluster for cluster in clusters if cluster.cluster_id not in weak_signal_ids
+    ]
+    weak_signals = [
+        cluster for cluster in clusters if cluster.cluster_id in weak_signal_ids
+    ]
+    return top_clusters, weak_signals
 
 
 def _build_alerts(

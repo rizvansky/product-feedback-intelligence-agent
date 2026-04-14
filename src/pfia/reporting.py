@@ -7,6 +7,7 @@ from pfia.models import (
     AlertRecord,
     ClusterRecord,
     PreprocessingSummary,
+    ReviewNormalized,
     ReportArtifact,
     SessionRuntimeMetadata,
 )
@@ -23,6 +24,9 @@ def build_report_markdown(
     diagnostics: dict[str, object],
     executive_summary_override: str | None = None,
     runtime_metadata: SessionRuntimeMetadata | None = None,
+    top_clusters: list[ClusterRecord] | None = None,
+    weak_signals: list[ClusterRecord] | None = None,
+    reviews: list[ReviewNormalized] | None = None,
 ) -> tuple[str, str]:
     """Build the Markdown report and executive summary for a session.
 
@@ -35,6 +39,9 @@ def build_report_markdown(
         diagnostics: Supplemental runtime diagnostics to surface in the report.
         executive_summary_override: Optional precomputed summary from an LLM agent.
         runtime_metadata: Optional runtime metadata snapshot for this session.
+        top_clusters: Optional presentation-filtered top themes.
+        weak_signals: Optional presentation-filtered weak-signal clusters.
+        reviews: Optional sanitized reviews used for quotes and simple-list mode.
 
     Returns:
         Tuple of ``(markdown_report, executive_summary)``.
@@ -42,6 +49,11 @@ def build_report_markdown(
     executive_summary = executive_summary_override or _build_executive_summary(
         clusters, alerts, degraded_mode
     )
+    executive_summary = _trim_words(executive_summary, 200)
+    review_lookup = {review.review_id: review for review in reviews or []}
+    selected_top_clusters = top_clusters or clusters
+    selected_weak_signals = weak_signals or []
+    low_data_mode = bool(diagnostics.get("low_data_mode"))
     lines = [
         f"# PFIA Report for {session_id}",
         "",
@@ -58,21 +70,49 @@ def build_report_markdown(
         f"- Potential injection attempts: {preprocessing_summary.injection_hits}",
         f"- Low-information reviews: {preprocessing_summary.low_information_records}",
         f"- Degraded mode: {'yes' if degraded_mode else 'no'}",
-        "",
-        "## Top Themes",
-        "",
-        "| Cluster ID | Label | Reviews | Priority | Sentiment | Trend | Confidence |",
-        "|---|---|---:|---:|---:|---:|---|",
     ]
 
-    for cluster in clusters:
+    if low_data_mode:
+        lines.extend(
+            [
+                "",
+                "## Low Data Mode",
+                "",
+                "Warning: fewer than 30 reviews were uploaded, so clustering reliability is limited.",
+                "PFIA switches to a simple list view first and treats any detected themes as provisional.",
+                "",
+                "## Simple List View",
+                "",
+            ]
+        )
+        if reviews:
+            for review in reviews:
+                lines.append(
+                    f"- `{review.review_id}` [{review.source}] {review.created_at.date().isoformat()} "
+                    f"`{review.language}` :: {review.text_anonymized}"
+                )
+        else:
+            lines.append("- No sanitized review previews are available.")
+
+    lines.extend(
+        [
+            "",
+            "## Top Themes",
+            "",
+            "| Cluster ID | Label | Reviews | Priority | Sentiment | Trend | Confidence |",
+            "|---|---|---:|---:|---:|---:|---|",
+        ]
+    )
+
+    for cluster in selected_top_clusters:
         lines.append(
             f"| `{cluster.cluster_id}` | {cluster.label} | {cluster.size} | "
             f"{cluster.priority_score:.2f} | {cluster.sentiment_score:.2f} | {cluster.trend_delta:.2f} | {cluster.confidence} |"
         )
 
     lines.extend(["", "## Theme Detail", ""])
-    for cluster in clusters:
+    for cluster in selected_top_clusters:
+        quotes = _quote_texts_for_cluster(cluster, review_lookup)
         lines.extend(
             [
                 f"### {cluster.label} (`{cluster.cluster_id}`)",
@@ -87,6 +127,18 @@ def build_report_markdown(
                 "",
             ]
         )
+        if quotes:
+            lines.append("Top quotes:")
+            for quote in quotes:
+                lines.append(f'- "{quote}"')
+            lines.append("")
+
+    lines.extend(["## Weak Signals", ""])
+    if selected_weak_signals:
+        for cluster in selected_weak_signals:
+            lines.append(f"- `{cluster.cluster_id}` {cluster.label}: {cluster.summary}")
+    else:
+        lines.append("- No weak-signal clusters were detected in this batch.")
 
     lines.extend(["## Alerts", ""])
     material_alerts = [alert for alert in alerts if not alert.insufficient_history]
@@ -100,6 +152,18 @@ def build_report_markdown(
                     else ""
                 )
             )
+            alert_cluster = next(
+                (
+                    cluster
+                    for cluster in clusters
+                    if cluster.cluster_id == alert.cluster_id
+                ),
+                None,
+            )
+            for quote in _quote_texts_for_cluster(
+                alert_cluster, review_lookup, limit=3
+            ):
+                lines.append(f'  - "{quote}"')
     else:
         lines.append(
             "- No critical anomaly spikes were detected in the available history."
@@ -125,7 +189,11 @@ def build_report_markdown(
             f"- Clustering backend: {diagnostics.get('clustering_backend_effective', 'n/a')}",
             f"- Selected clustering profile: {diagnostics.get('clustering_selected_profile', 'n/a')}",
             f"- Reflection attempts: {diagnostics.get('clustering_reflection_attempt_count', 0)}",
-            f"- Total clusters included in report: {diagnostics.get('total_clusters', 0)}",
+            f"- Total clusters included in report: {len(selected_top_clusters)}",
+            f"- Weak signal clusters: {diagnostics.get('weak_signal_cluster_count', 0)}",
+            f"- Mixed sentiment clusters: {diagnostics.get('mixed_sentiment_cluster_count', 0)}",
+            f"- Mixed-language reviews: {diagnostics.get('mixed_language_review_count', 0)}",
+            f"- Low data mode: {'yes' if low_data_mode else 'no'}",
             f"- Degraded reason: {diagnostics.get('degraded_reason') or 'n/a'}",
             "",
         ]
@@ -196,6 +264,35 @@ def _build_executive_summary(
     )
 
 
+def _quote_texts_for_cluster(
+    cluster: ClusterRecord | None,
+    review_lookup: dict[str, ReviewNormalized],
+    *,
+    limit: int | None = None,
+) -> list[str]:
+    """Resolve anonymized quote texts for a cluster from its stored quote ids."""
+
+    if cluster is None:
+        return []
+    resolved = [
+        review_lookup[review_id].text_anonymized
+        for review_id in cluster.top_quote_ids
+        if review_id in review_lookup
+    ]
+    if limit is not None:
+        return resolved[:limit]
+    return resolved
+
+
+def _trim_words(text: str, max_words: int) -> str:
+    """Trim free-text output to a bounded word budget."""
+
+    words = text.split()
+    if len(words) <= max_words:
+        return text.strip()
+    return " ".join(words[:max_words]).strip() + "..."
+
+
 def _render_runtime_metadata(runtime_metadata: SessionRuntimeMetadata) -> list[str]:
     """Render the runtime metadata appendix for the Markdown report.
 
@@ -209,6 +306,8 @@ def _render_runtime_metadata(runtime_metadata: SessionRuntimeMetadata) -> list[s
         "## Runtime Metadata",
         "",
         f"- Runtime profile: `{runtime_metadata.runtime_profile}`",
+        f"- Presentation mode: `{runtime_metadata.presentation_mode}`",
+        f"- Low data mode: {'yes' if runtime_metadata.low_data_mode else 'no'}",
         f"- Trace correlation id: `{runtime_metadata.trace_correlation_id}`",
         f"- Trace exporters effective: {', '.join(f'`{item}`' for item in runtime_metadata.trace_exporters_effective) or 'n/a'}",
         f"- Local trace path: `{runtime_metadata.trace_local_path or 'n/a'}`",
@@ -241,8 +340,15 @@ def _render_runtime_metadata(runtime_metadata: SessionRuntimeMetadata) -> list[s
         f"- Input content type: `{runtime_metadata.input_content_type or 'n/a'}`",
         f"- Records kept: `{runtime_metadata.records_kept}` of `{runtime_metadata.records_total}`",
         f"- Top cluster ids: {', '.join(f'`{cluster_id}`' for cluster_id in runtime_metadata.top_cluster_ids) or 'n/a'}",
+        f"- Weak signal cluster ids: {', '.join(f'`{cluster_id}`' for cluster_id in runtime_metadata.weak_signal_cluster_ids) or 'n/a'}",
+        f"- Weak signal count: `{runtime_metadata.weak_signal_count}`",
+        f"- Mixed sentiment cluster ids: {', '.join(f'`{cluster_id}`' for cluster_id in runtime_metadata.mixed_sentiment_cluster_ids) or 'n/a'}",
+        f"- Mixed sentiment cluster count: `{runtime_metadata.mixed_sentiment_cluster_count}`",
+        f"- Mixed-language review count: `{runtime_metadata.mixed_language_review_count}`",
         f"- Data dir: `{runtime_metadata.data_dir}`",
         f"- Chroma dir: `{runtime_metadata.chroma_persist_dir or 'n/a'}`",
+        f"- Chroma mode effective: `{runtime_metadata.chroma_mode_effective or 'n/a'}`",
+        f"- Chroma endpoint effective: `{runtime_metadata.chroma_endpoint_effective or 'n/a'}`",
         f"- Embedded worker: {'yes' if runtime_metadata.embedded_worker else 'no'}",
         "- Provider usage summary:",
     ]

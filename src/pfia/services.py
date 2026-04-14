@@ -7,7 +7,12 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any
 
-from pfia.analysis import AnalysisArtifacts, analyze_reviews, build_alerts
+from pfia.analysis import (
+    AnalysisArtifacts,
+    analyze_reviews,
+    build_alerts,
+    partition_clusters_for_display,
+)
 from pfia.config import Settings, get_settings
 from pfia.db import Database, utcnow
 from pfia.errors import PFIAError
@@ -468,6 +473,19 @@ class PFIAService:
             "INFO",
             f"Built {len(analysis.clusters)} clusters. Quality={analysis.diagnostics['quality_score']:.3f}.",
         )
+        if analysis.diagnostics.get("low_data_mode"):
+            self.repo.log_event(
+                job_id,
+                session_id,
+                JobStage.cluster,
+                "job.cluster.low_data_mode",
+                "WARN",
+                "Low-data mode activated; switching presentation to simple-list-first.",
+                metadata={
+                    "low_data_review_threshold": self.settings.low_data_review_threshold,
+                    "records_kept": len(reviews),
+                },
+            )
         reviewed_clusters, updated_mapping, cluster_review_meta = (
             review_clusters_with_llm(
                 analysis.clusters,
@@ -617,6 +635,11 @@ class PFIAService:
             )
         )
         analysis.diagnostics["report_agent"] = report_agent_meta
+        top_clusters, weak_signals = partition_clusters_for_display(
+            analysis.clusters,
+            list(analysis.diagnostics.get("weak_signal_cluster_ids", [])),
+        )
+        report_top_clusters = top_clusters[: self.settings.report_top_clusters]
         review_payload = []
         for review in reviews:
             cluster_id = analysis.cluster_by_review.get(review.review_id)
@@ -637,12 +660,15 @@ class PFIAService:
         preview_markdown, preview_executive_summary = build_report_markdown(
             session_id,
             summary,
-            analysis.clusters[: self.settings.report_top_clusters],
+            analysis.clusters,
             analysis.alerts,
             degraded_mode=degraded_mode,
             diagnostics=analysis.diagnostics,
             executive_summary_override=executive_summary_override,
             runtime_metadata=None,
+            top_clusters=report_top_clusters,
+            weak_signals=weak_signals,
+            reviews=reviews,
         )
         retrieval_build = build_retrieval_index(
             session_id,
@@ -670,16 +696,21 @@ class PFIAService:
             preprocessing_runtime_meta=preprocessing_runtime_meta,
             retrieval_build=retrieval_build,
             orchestrator_backend_effective=orchestrator_backend_effective,
+            top_clusters=report_top_clusters,
+            weak_signals=weak_signals,
         )
         report_markdown, executive_summary = build_report_markdown(
             session_id,
             summary,
-            analysis.clusters[: self.settings.report_top_clusters],
+            analysis.clusters,
             analysis.alerts,
             degraded_mode=degraded_mode,
             diagnostics=analysis.diagnostics,
             executive_summary_override=executive_summary_override,
             runtime_metadata=runtime_metadata,
+            top_clusters=report_top_clusters,
+            weak_signals=weak_signals,
+            reviews=reviews,
         )
         self.repo.save_runtime_metadata(session_id, runtime_metadata)
         self.metrics.session_cost_usd.labels(session_id=session_id).set(
@@ -738,6 +769,8 @@ class PFIAService:
         preprocessing_runtime_meta: dict[str, Any],
         retrieval_build: RetrievalBuildResult,
         orchestrator_backend_effective: str,
+        top_clusters,
+        weak_signals,
     ) -> SessionRuntimeMetadata:
         """Build a compact runtime metadata snapshot for one completed session.
 
@@ -749,6 +782,8 @@ class PFIAService:
             preprocessing_runtime_meta: Effective preprocessing backend diagnostics.
             retrieval_build: Effective retrieval backend information for the run.
             orchestrator_backend_effective: Effective batch orchestrator backend for the run.
+            top_clusters: Presentation-filtered top theme clusters.
+            weak_signals: Presentation-filtered weak-signal clusters.
 
         Returns:
             Structured runtime metadata used by the API and report.
@@ -791,6 +826,12 @@ class PFIAService:
         )
         return SessionRuntimeMetadata(
             runtime_profile="llm-enhanced" if llm_agent_used else "deterministic",
+            presentation_mode=(
+                "simple_list"
+                if bool(analysis.diagnostics.get("low_data_mode"))
+                else "clustered"
+            ),
+            low_data_mode=bool(analysis.diagnostics.get("low_data_mode")),
             trace_correlation_id=(
                 telemetry.correlation_id if telemetry is not None else "n/a"
             ),
@@ -849,13 +890,23 @@ class PFIAService:
             input_content_type=str(session.config_snapshot.get("content_type") or ""),
             records_total=summary.total_records,
             records_kept=summary.kept_records,
-            top_cluster_ids=[
-                cluster.cluster_id
-                for cluster in analysis.clusters[: self.settings.report_top_clusters]
-            ],
+            top_cluster_ids=[cluster.cluster_id for cluster in top_clusters],
+            weak_signal_cluster_ids=[cluster.cluster_id for cluster in weak_signals],
+            weak_signal_count=len(weak_signals),
+            mixed_sentiment_cluster_ids=list(
+                analysis.diagnostics.get("mixed_sentiment_cluster_ids", [])
+            ),
+            mixed_sentiment_cluster_count=int(
+                analysis.diagnostics.get("mixed_sentiment_cluster_count", 0)
+            ),
+            mixed_language_review_count=int(
+                analysis.diagnostics.get("mixed_language_review_count", 0)
+            ),
             data_dir=str(self.settings.data_dir),
             embedded_worker=bool(self.settings.embedded_worker),
             chroma_persist_dir=str(self.settings.chroma_persist_dir),
+            chroma_mode_effective=retrieval_build.chroma_mode_effective,
+            chroma_endpoint_effective=retrieval_build.chroma_endpoint_effective,
             agent_usage=agent_usage,
         )
 

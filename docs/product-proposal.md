@@ -1,7 +1,5 @@
 # Product Proposal
 
-> Примечание по текущему репозиторию: этот документ описывает исходный proposal и более широкий target design. Фактическая PoC-реализация в коде сейчас проще: FastAPI + static UI вместо Next.js, Chroma-backed retrieval внутри основного runtime вместо отдельного vector DB service, LLM-backed multi-agent слой с LangGraph batch orchestrator, `OpenAI` как primary provider, `Mistral` как fallback 1 и `Anthropic` как fallback 2. Для текущего runtime ориентироваться на `README`, `docs/llm-runtime.md` и `docs/testing-playbook.md`.
-
 ______________________________________________________________________
 
 ## 1. Обоснование идеи

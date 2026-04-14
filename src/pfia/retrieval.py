@@ -82,6 +82,8 @@ class RetrievalBuildResult:
     effective_backend: str
     embedding_backend_effective: str = "projection"
     embedding_model_effective: str | None = None
+    chroma_mode_effective: str | None = None
+    chroma_endpoint_effective: str | None = None
     degraded_reason: str | None = None
 
 
@@ -101,6 +103,10 @@ class RetrievalIndex:
     backend_requested: str = "local"
     backend_effective: str = "local"
     chroma_path: str | None = None
+    chroma_mode: str = "embedded"
+    chroma_host: str | None = None
+    chroma_port: int | None = None
+    chroma_ssl: bool = False
     cluster_collection_name: str | None = None
     review_collection_name: str | None = None
     embedding_backend_effective: str = "projection"
@@ -203,6 +209,10 @@ def build_retrieval_index(
         backend_requested=retrieval_backend,
         backend_effective="local",
         chroma_path=str(chroma_path) if chroma_path is not None else None,
+        chroma_mode=(settings.chroma_mode if settings is not None else "embedded"),
+        chroma_host=(settings.chroma_host if settings is not None else None),
+        chroma_port=(settings.chroma_port if settings is not None else None),
+        chroma_ssl=(settings.chroma_ssl if settings is not None else False),
         embedding_backend_effective="projection",
         embedding_model_effective="tfidf-svd-projection",
         semantic_projector=semantic_projector,
@@ -210,8 +220,11 @@ def build_retrieval_index(
     )
 
     degraded_reason = None
+    chroma_mode_effective = None
+    chroma_endpoint_effective = None
     if retrieval_backend == "chroma":
-        if chroma_path is None:
+        chroma_mode = settings.chroma_mode if settings is not None else "embedded"
+        if chroma_mode == "embedded" and chroma_path is None:
             degraded_reason = "chroma_path_not_configured"
         elif not chroma_available():
             degraded_reason = "chromadb_not_installed"
@@ -236,10 +249,15 @@ def build_retrieval_index(
                         degraded_reason = exc.code.lower()
                 cluster_embeddings = dense_embeddings[: len(cluster_docs)]
                 review_embeddings = dense_embeddings[len(cluster_docs) :]
-                chroma_path.mkdir(parents=True, exist_ok=True)
+                client, chroma_mode_effective, chroma_endpoint_effective = (
+                    _build_chroma_client(
+                        settings=settings,
+                        chroma_path=chroma_path,
+                    )
+                )
                 _write_chroma_vectors(
+                    client=client,
                     session_id=session_id,
-                    chroma_path=chroma_path,
                     clusters=clusters,
                     cluster_docs=cluster_docs,
                     cluster_embeddings=cluster_embeddings,
@@ -260,6 +278,8 @@ def build_retrieval_index(
         effective_backend=payload.backend_effective,
         embedding_backend_effective=payload.embedding_backend_effective,
         embedding_model_effective=payload.embedding_model_effective,
+        chroma_mode_effective=chroma_mode_effective,
+        chroma_endpoint_effective=chroma_endpoint_effective,
         degraded_reason=degraded_reason,
     )
 
@@ -517,10 +537,17 @@ class SessionRetriever:
 
         return bool(
             self.payload.backend_effective == "chroma"
-            and self.payload.chroma_path
             and self.payload.cluster_collection_name
             and self.payload.review_collection_name
             and chroma_available()
+            and (
+                (self.payload.chroma_mode == "embedded" and self.payload.chroma_path)
+                or (
+                    self.payload.chroma_mode == "http"
+                    and self.payload.chroma_host
+                    and self.payload.chroma_port
+                )
+            )
         )
 
     def _search_clusters_local(self, query: str, *, top_k: int) -> list[ClusterHit]:
@@ -696,9 +723,16 @@ class SessionRetriever:
         if not self._can_use_chroma():
             raise RuntimeError("Chroma backend is not available for this payload.")
         if self._chroma_client is None:
-            self._chroma_client = chromadb.PersistentClient(
-                path=self.payload.chroma_path
-            )
+            if self.payload.chroma_mode == "http":
+                self._chroma_client = chromadb.HttpClient(
+                    host=self.payload.chroma_host,
+                    port=self.payload.chroma_port,
+                    ssl=bool(self.payload.chroma_ssl),
+                )
+            else:
+                self._chroma_client = chromadb.PersistentClient(
+                    path=self.payload.chroma_path
+                )
         return self._chroma_client
 
 
@@ -724,10 +758,44 @@ def _build_semantic_projection(
     return np.zeros((sample_count, 1), dtype=np.float32), None, None
 
 
+def _build_chroma_client(
+    *,
+    settings: Settings | None,
+    chroma_path: Path | None,
+) -> tuple[Any, str, str | None]:
+    """Create the effective Chroma client for indexing and retrieval."""
+
+    chroma_mode = settings.chroma_mode if settings is not None else "embedded"
+    if chroma_mode == "http":
+        if settings is None:
+            raise RuntimeError("HTTP Chroma mode requires runtime settings.")
+        endpoint = (
+            f"http{'s' if settings.chroma_ssl else ''}://"
+            f"{settings.chroma_host}:{settings.chroma_port}"
+        )
+        return (
+            chromadb.HttpClient(
+                host=settings.chroma_host,
+                port=settings.chroma_port,
+                ssl=settings.chroma_ssl,
+            ),
+            "http",
+            endpoint,
+        )
+    if chroma_path is None:
+        raise RuntimeError("Embedded Chroma mode requires a persistence path.")
+    chroma_path.mkdir(parents=True, exist_ok=True)
+    return (
+        chromadb.PersistentClient(path=str(chroma_path)),
+        "embedded",
+        str(chroma_path),
+    )
+
+
 def _write_chroma_vectors(
     *,
+    client: Any,
     session_id: str,
-    chroma_path: Path,
     clusters: list[ClusterRecord],
     cluster_docs: list[str],
     cluster_embeddings: np.ndarray,
@@ -736,7 +804,6 @@ def _write_chroma_vectors(
 ) -> None:
     """Write session vectors into persistent Chroma collections."""
 
-    client = chromadb.PersistentClient(path=str(chroma_path))
     cluster_collection = client.get_or_create_collection(
         CHROMA_CLUSTER_COLLECTION,
         metadata={"hnsw:space": "cosine"},
@@ -843,6 +910,14 @@ def _hydrate_payload_defaults(payload: RetrievalIndex) -> RetrievalIndex:
         payload.backend_effective = "local"
     if not hasattr(payload, "chroma_path"):
         payload.chroma_path = None
+    if not hasattr(payload, "chroma_mode"):
+        payload.chroma_mode = "embedded"
+    if not hasattr(payload, "chroma_host"):
+        payload.chroma_host = None
+    if not hasattr(payload, "chroma_port"):
+        payload.chroma_port = None
+    if not hasattr(payload, "chroma_ssl"):
+        payload.chroma_ssl = False
     if not hasattr(payload, "cluster_collection_name"):
         payload.cluster_collection_name = None
     if not hasattr(payload, "review_collection_name"):

@@ -2,7 +2,7 @@
 
 PFIA - это PoC-система для пакетного анализа пользовательского фидбека: загрузка CSV/JSON, анонимизация PII, тематическая кластеризация, приоритизация проблем, anomaly detection, Markdown-отчёт и grounded Q&A по уже обработанной сессии.
 
-Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite и persistent Chroma-backed retrieval с projection fallback. При наличии `OPENAI_API_KEY` можно включить proposal-grade embedding path (`text-embedding-3-small`) и LLM-backed multi-agent runtime, а при сбое внешних provider'ов сервис автоматически возвращается к local sentence-transformers или deterministic fallback path.
+Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite, persistent Chroma-backed retrieval с projection fallback и отдельный `Next.js` frontend с proxy-контуром до FastAPI API. При наличии `OPENAI_API_KEY` можно включить proposal-grade embedding path (`text-embedding-3-small`) и LLM-backed multi-agent runtime, а при сбое внешних provider'ов сервис автоматически возвращается к local sentence-transformers или deterministic fallback path.
 
 ## Live Demo
 
@@ -38,10 +38,14 @@ PFIA - это PoC-система для пакетного анализа пол
   - raw PII не сохраняется в sanitized artifacts, отчётах и retrieval.
 - Локальный analysis pipeline:
   - multilingual preprocessing;
+  - chunk-level RU/EN handling for mixed-language reviews;
   - concept-enhanced clustering;
   - priority scoring;
   - anomaly detection по weekly baseline;
-  - Markdown report + executive summary.
+  - Markdown report + executive summary + top quotes per theme;
+  - low-data mode with simple-list-first presentation;
+  - weak-signal separation for 2-3 review clusters;
+  - mixed-sentiment cluster marking in summary/runtime diagnostics.
 - Опциональный OpenAI multi-agent слой:
   - `PreprocessReviewAgent` для second-pass review пограничных `spam` / `injection_suspected` / `low_information` флагов;
   - `ClusterReviewAgent` для merge/split review поверх детерминированной кластеризации;
@@ -58,6 +62,7 @@ PFIA - это PoC-система для пакетного анализа пол
   - `get_report_section`.
 - Runtime metadata для каждого completed run:
   - effective orchestrator backend;
+  - presentation mode and low-data flag;
   - trace correlation id;
   - effective backend;
   - effective PII backend;
@@ -67,22 +72,28 @@ PFIA - это PoC-система для пакетного анализа пол
   - input filename;
   - records kept;
   - top cluster ids;
+  - weak-signal cluster ids;
+  - mixed-sentiment cluster ids;
+  - mixed-language review count;
   - per-agent usage snapshot.
 - Health endpoints, Prometheus-compatible `/metrics`, Docker Compose, demo dataset и тесты.
 - Hosted deploy profile под Railway: single-service режим с embedded worker и persistent volume.
 
 ## Реальный Stack В Репозитории
 
-Текущая имплементация намеренно проще изначального target design:
+Репозиторий поддерживает два рабочих deployment/runtime профиля:
 
-- `api`: FastAPI-приложение, которое одновременно отдаёт HTTP API и статический frontend.
-- `worker`: отдельный Python worker для очереди jobs.
-- `storage`: SQLite + локальные файлы артефактов + persistent Chroma collections + session pickle fallback для retrieval.
-- `frontend`: статический UI, встроенный в web service.
+- `compose / multi-service`: отдельные `frontend`, `api`, `worker`, `chroma`.
+- `hosted / single-service`: `api` + embedded worker + persistent volume.
 
-Это сделано сознательно ради PoC и будущего деплоя с минимальным operational overhead. Логические границы модулей из проектной документации сохранены, но контейнерная топология упрощена.
+Состав сервисов и модульные границы при этом остаются одинаковыми:
 
-Для hosted deployment в репозитории также подготовлен single-service профиль:
+- `frontend`: отдельный `Next.js 14` App Router UI с `shadcn/ui`-style component layer и same-origin proxy к backend;
+- `api`: FastAPI-приложение, которое отдаёт HTTP API и встроенный UI;
+- `worker`: отдельный Python worker для очереди jobs;
+- `storage`: SQLite + локальные файлы артефактов + `Chroma` vector store + session pickle fallback для retrieval.
+
+Для hosted deployment в репозитории подготовлен single-service профиль:
 
 - `api + embedded worker`: один web-service process с фоновым worker thread.
 - `storage`: Railway volume, автоматически подхватываемый через `RAILWAY_VOLUME_MOUNT_PATH`.
@@ -107,12 +118,19 @@ docker compose up --build
 
 После старта открой:
 
-- UI: `http://localhost:8000`
+- Next.js UI: `http://localhost:3000`
+- Built-in FastAPI UI: `http://localhost:8000`
 - live health: `http://localhost:8000/health/live`
 - ready health: `http://localhost:8000/health/ready`
 - metrics: `http://localhost:8000/metrics`
 
 `docker-compose.yml` использует `.env.example` с безопасными offline-дефолтами, так что для demo дополнительная настройка не нужна.
+
+В compose-профиле:
+
+- `frontend` работает как отдельный сервис и ходит в backend через Next.js rewrite proxy `/pfia -> http://api:8000`, поэтому browser-side запросы не упираются в CORS;
+- `chroma` поднят как отдельный service и обслуживает retrieval/indexing по `http://chroma:8001`;
+- `api` и `worker` подключаются к нему через `PFIA_CHROMA_MODE=http`.
 
 Примечание: внутри Docker data dir принудительно переопределяется в `/app/data/runtime`, поэтому локальный host-path и контейнерный path не конфликтуют.
 Примечание: local `docker compose` по умолчанию собирает image без `spaCy`-моделей, чтобы сборка оставалась легче и быстрее.
@@ -155,6 +173,23 @@ PYTHONPATH=src ./.venv/bin/python -m pfia.api
 PYTHONPATH=src ./.venv/bin/python -m pfia.worker
 ```
 
+Установка зависимостей frontend:
+
+```bash
+make frontend-install
+```
+
+Запуск Next.js frontend:
+
+```bash
+make run-frontend
+```
+
+После этого открой:
+
+- Next.js UI: `http://localhost:3000`
+- Built-in FastAPI UI: `http://localhost:8000`
+
 Локальная симуляция hosted-профиля:
 
 ```bash
@@ -173,7 +208,9 @@ make run-embedded
 
 ```bash
 make test
+make evals
 make demo
+make run-frontend
 ```
 
 ### LLM Multi-Agent Mode
@@ -183,6 +220,7 @@ make demo
 ```bash
 PFIA_ORCHESTRATOR_BACKEND=langgraph
 PFIA_RETRIEVAL_BACKEND=chroma
+PFIA_CHROMA_MODE=embedded
 PFIA_PII_BACKEND=regex+spacy
 PFIA_PII_SPACY_RU_MODEL=ru_core_news_sm
 PFIA_PII_SPACY_EN_MODEL=en_core_web_sm
@@ -233,6 +271,7 @@ make install-spacy-models
 - `embedding_backend_effective` должен быть `openai`, `sentence-transformers`, `projection` или `mixed`;
 - `generation_backend_effective` должен быть `openai`, `mistral`, `anthropic` или `mixed`;
 - `retrieval_backend_effective` должен быть `chroma`;
+- `chroma_mode_effective` должен быть `embedded` или `http`;
 - `embedding_model_effective` должен быть `text-embedding-3-small`, `paraphrase-multilingual-mpnet-base-v2` или projection fallback model;
 - `sentiment_model_effective` должен быть `vaderSentiment` или `n/a`;
 - `trace_correlation_id` должен быть непустым;
@@ -274,7 +313,7 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://your-otlp-endpoint/v1/traces
 
 ## Произвольный Прогон
 
-Проект не завязан на встроенный demo dataset. Через UI и API можно загрузить произвольный CSV/JSON.
+Проект не завязан на встроенный demo dataset. Через Next.js UI, fallback FastAPI UI и HTTP API можно загрузить произвольный CSV/JSON.
 
 Минимальный входной контракт:
 
@@ -336,6 +375,29 @@ python check.py --file path/to/reviews.csv --question "Which topic is spiking th
 
 Если взять другой файл, другие размеры батча и другой вопрос, ответы и runtime metadata будут другими. Это самый простой способ показать, что демо не hardcoded.
 
+## Automated Acceptance Evals
+
+Для proposal-aligned acceptance checks теперь есть отдельный runner:
+
+```bash
+make evals
+```
+
+или напрямую:
+
+```bash
+PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
+```
+
+Он автоматически проверяет:
+
+- end-to-end batch completion;
+- PII masking regression;
+- retrieval на фиксированном наборе вопросов;
+- trace/correlation metadata;
+- recovery после simulated in-flight crash;
+- наличие runtime metadata и runtime appendix в report.
+
 ## Демонстрационный Сценарий
 
 В репозитории уже лежит demo dataset:
@@ -383,7 +445,9 @@ python check.py --file path/to/reviews.csv --question "Which topic is spiking th
 
 Проверки, выполненные на текущем состоянии проекта:
 
-- `pytest`: `12 passed`
+- `pytest`: `33 passed`
+- `npm --prefix frontend run build`
+- `pfia.evals` acceptance harness
 - локальный smoke batch-flow
 - локальный smoke grounded Q&A
 - `docker compose build`
@@ -476,4 +540,4 @@ python check.py --file path/to/reviews.csv --question "Which topic is spiking th
 - [Testing Playbook](docs/testing-playbook.md)
 - [LLM Runtime Strategy](docs/llm-runtime.md)
 
-Важно: часть документов описывает более широкий target design, чем текущая PoC-реализация. Для сдачи и деплоя ориентироваться стоит прежде всего на этот `README`, [docs/testing-playbook.md](docs/testing-playbook.md), [docs/llm-runtime.md](docs/llm-runtime.md) и фактический код в репозитории.
+Для сдачи и деплоя ориентироваться стоит на этот `README`, [docs/testing-playbook.md](docs/testing-playbook.md), [docs/llm-runtime.md](docs/llm-runtime.md) и фактический код в репозитории.

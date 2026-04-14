@@ -105,8 +105,11 @@ def main() -> None:
 
     print("FINAL_SESSION_STATUS:", detail["session"]["status"])
     print("FINAL_JOB_STATUS:", detail["job"]["status"])
+    print("PRESENTATION_MODE:", detail.get("presentation_mode", "n/a"))
+    print("WARNING_COUNT:", len(detail.get("warnings") or []))
     runtime_metadata = detail.get("runtime_metadata") or {}
     print("RUNTIME_PROFILE:", runtime_metadata.get("runtime_profile", "n/a"))
+    print("LOW_DATA_MODE:", runtime_metadata.get("low_data_mode", False))
     print("TRACE_CORRELATION_ID:", runtime_metadata.get("trace_correlation_id", "n/a"))
     print(
         "TRACE_EXPORTERS:",
@@ -124,6 +127,12 @@ def main() -> None:
     print(
         "RETRIEVAL_BACKEND:",
         runtime_metadata.get("retrieval_backend_effective", "n/a"),
+    )
+    print("CHROMA_MODE:", runtime_metadata.get("chroma_mode_effective", "n/a"))
+    print(
+        "CHROMA_ENDPOINT:",
+        runtime_metadata.get("chroma_endpoint_effective")
+        or runtime_metadata.get("chroma_persist_dir", "n/a"),
     )
     print("PII_BACKEND:", runtime_metadata.get("pii_backend_effective", "n/a"))
     print(
@@ -158,6 +167,17 @@ def main() -> None:
     print("PRIMARY_MODEL:", runtime_metadata.get("llm_primary_model", "n/a"))
     print("INPUT_FILENAME:", runtime_metadata.get("input_filename", "n/a"))
     print("TOP_CLUSTER_IDS:", runtime_metadata.get("top_cluster_ids", []))
+    print(
+        "WEAK_SIGNAL_CLUSTER_IDS:", runtime_metadata.get("weak_signal_cluster_ids", [])
+    )
+    print(
+        "MIXED_SENTIMENT_CLUSTER_IDS:",
+        runtime_metadata.get("mixed_sentiment_cluster_ids", []),
+    )
+    print(
+        "MIXED_LANGUAGE_REVIEW_COUNT:",
+        runtime_metadata.get("mixed_language_review_count", 0),
+    )
 
     chat = httpx.post(
         f"{base_url}/api/sessions/{session_id}/chat",

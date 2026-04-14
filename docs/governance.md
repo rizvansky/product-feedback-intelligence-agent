@@ -1,6 +1,6 @@
 # Governance
 
-> Примечание по текущему репозиторию: этот документ сочетает target-policy и текущие PoC-требования. В текущей реализации raw uploads кратковременно сохраняются на локальном runtime-диске для batch processing, но в LLM path передаются только sanitized texts. Реальный runtime today использует OpenAI как primary provider, Mistral как first fallback и Anthropic как second fallback; operational truth зафиксирован в `README`, `docs/llm-runtime.md` и `docs/testing-playbook.md`.
+Этот документ задаёт policy для текущей реализации PFIA. Raw uploads кратковременно сохраняются на локальном runtime-диске для batch processing, но в LLM path передаются только sanitized texts. Generation layer использует OpenAI как primary provider, Mistral как first fallback и Anthropic как second fallback.
 
 ______________________________________________________________________
 

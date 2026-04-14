@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     max_batch_size: int = 2000
     max_upload_size_bytes: int = 10 * 1024 * 1024
     max_queue_depth: int = 3
-    report_top_clusters: int = 10
+    report_top_clusters: int = 5
+    report_quotes_per_cluster: int = 5
+    alert_quotes_per_cluster: int = 3
     session_retention_days: int = 7
     langsmith_tracing: bool = Field(default=False, alias="LANGSMITH_TRACING")
     langsmith_api_key: str = Field(default="", alias="LANGSMITH_API_KEY")
@@ -52,8 +54,14 @@ class Settings(BaseSettings):
     clustering_reflection_threshold: float = 0.35
     clustering_reflection_max_profiles: int = 3
     clustering_max_cluster_count: int = 20
+    low_data_review_threshold: int = 30
+    weak_signal_max_cluster_size: int = 3
     retrieval_top_k: int = 5
     retrieval_backend: str = "chroma"
+    chroma_mode: str = "embedded"
+    chroma_host: str = "127.0.0.1"
+    chroma_port: int = 8001
+    chroma_ssl: bool = False
     orchestrator_backend: str = "langgraph"
     pii_backend: str = "regex+spacy"
     pii_spacy_ru_model: str = "ru_core_news_sm"

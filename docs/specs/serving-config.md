@@ -6,25 +6,28 @@
 
 ## Контейнеры
 
-Локальный PoC-профиль использует два runtime-сервиса:
+Локальный PoC-профиль использует четыре runtime-сервиса:
 
 | Контейнер | Роль |
 |---|---|
-| `api` | FastAPI serving layer + встроенный статический frontend |
+| `frontend` | Next.js 14 UI + same-origin proxy до backend |
+| `api` | FastAPI serving layer + built-in UI |
 | `worker` | orchestrator и batch-processing |
+| `chroma` | отдельный vector store service для retrieval и session-scoped indexes |
 
 Дополнительно, без отдельного контейнера:
 
 - SQLite на общем volume;
-- local storage volume для upload-файлов, sanitized artifacts, reports и persistent Chroma storage;
+- local storage volume для upload-файлов, sanitized artifacts и reports;
 - session pickle fallback рядом с Chroma collections для report sections, trends и lexical retrieval fallback.
 
-Hosted deploy profile для Railway упрощён до одного web-service:
+Hosted deploy profile для Railway использует один web-service:
 
 - `api` остаётся FastAPI serving layer;
 - `worker` поднимается как embedded background thread внутри того же процесса;
 - runtime state уходит в Railway volume через `RAILWAY_VOLUME_MOUNT_PATH`.
 - production image по умолчанию устанавливает `en_core_web_sm` и `ru_core_news_sm`.
+- built-in FastAPI UI доступен и в single-service profile.
 
 ## Обязательные конфиги
 
@@ -66,7 +69,16 @@ Hosted deploy profile для Railway упрощён до одного web-servic
 | `PFIA_LLM_FALLBACK_MODEL` | резервная generation model |
 | `PFIA_LLM_SECOND_FALLBACK_MODEL` | резервная generation model fallback 2 |
 | `PFIA_RETRIEVAL_BACKEND` | `chroma` / `local` |
+| `PFIA_CHROMA_MODE` | `embedded` / `http` |
+| `PFIA_CHROMA_HOST` | host внешнего Chroma service |
+| `PFIA_CHROMA_PORT` | port внешнего Chroma service |
+| `PFIA_CHROMA_SSL` | включает TLS для Chroma HTTP client |
 | `PFIA_MAX_BATCH_SIZE` | верхняя граница batch |
+| `PFIA_REPORT_TOP_CLUSTERS` | число top themes в report/UI |
+| `PFIA_REPORT_QUOTES_PER_CLUSTER` | число quote excerpts на тему в report |
+| `PFIA_ALERT_QUOTES_PER_CLUSTER` | число quote excerpts в alert section |
+| `PFIA_LOW_DATA_REVIEW_THRESHOLD` | порог simple-list mode для batch'ей < N отзывов |
+| `PFIA_WEAK_SIGNAL_MAX_CLUSTER_SIZE` | максимум размера weak-signal cluster |
 | `PFIA_SESSION_RETENTION_DAYS` | срок хранения артефактов |
 | `PFIA_PROMETHEUS_ENABLED` | включение `/metrics` |
 
@@ -88,9 +100,16 @@ Hosted deploy profile для Railway упрощён до одного web-servic
 
 Дополнительно runtime фиксирует:
 
+- `presentation_mode`;
+- `low_data_mode`;
 - `trace_correlation_id`;
 - `trace_exporters_effective`;
 - `trace_local_path`.
+- `weak_signal_cluster_ids`;
+- `mixed_sentiment_cluster_ids`;
+- `mixed_language_review_count`;
+- `chroma_mode_effective`;
+- `chroma_endpoint_effective`.
 
 ## Health endpoints
 
@@ -119,6 +138,12 @@ Hosted deploy profile для Railway упрощён до одного web-servic
 |---|---|
 | `pfia-web` | от 1 vCPU / 1 GB |
 
+Если нужен hosted profile с отдельным frontend, добавляется ещё один service:
+
+| Компонент | CPU / RAM target |
+|---|---|
+| `pfia-frontend` | от 0,5 vCPU / 512 MB |
+
 ## Секреты
 
 - Ключи не коммитятся в репозиторий.
@@ -143,3 +168,14 @@ Hosted deploy profile для Railway упрощён до одного web-servic
 - Railway / production image: `true`;
 - local `docker compose`: `false`;
 - если нужен full privacy path локально в Docker, включай build arg вручную.
+
+## Frontend Proxy Config
+
+Отдельный Next.js frontend использует два env-параметра:
+
+| Переменная | Назначение |
+|---|---|
+| `NEXT_PUBLIC_PFIA_API_BASE_URL` | browser-visible base path; по умолчанию `/pfia` |
+| `PFIA_INTERNAL_API_BASE_URL` | internal rewrite target для Next.js server; локально `http://127.0.0.1:8000`, в compose `http://api:8000` |
+
+Такой proxy-контур позволяет держать browser traffic same-origin и не включать CORS в FastAPI только ради frontend-сервиса.

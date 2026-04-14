@@ -136,7 +136,9 @@ priority_score =
 
 - executive summary;
 - top clusters;
+- top quotes per cluster;
 - weak signals section;
+- simple list view section when `low_data_mode=true`;
 - alerts section;
 - note о degraded mode, если он был активирован.
 

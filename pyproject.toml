@@ -30,6 +30,7 @@ dev = ["pytest>=9.0.3"]
 [project.scripts]
 pfia-api = "pfia.api:main"
 pfia-worker = "pfia.worker:main"
+pfia-evals = "pfia.evals:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,5 +1,44 @@
 ---
 services:
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_PFIA_API_BASE_URL: /pfia
+        PFIA_INTERNAL_API_BASE_URL: http://api:8000
+    environment:
+      NEXT_PUBLIC_PFIA_API_BASE_URL: /pfia
+      PFIA_INTERNAL_API_BASE_URL: http://api:8000
+    ports: [3000:3000]
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD-SHELL, wget -q -O /dev/null http://127.0.0.1:3000 || exit 1]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+  chroma:
+    build:
+      context: .
+      args:
+        PFIA_INSTALL_SPACY_MODELS: ${PFIA_INSTALL_SPACY_MODELS-false}
+    command:
+      - chroma
+      - run
+      - --host
+      - 0.0.0.0
+      - --port
+      - '8001'
+      - --path
+      - /chroma-data
+    environment:
+      IS_PERSISTENT: 'TRUE'
+    ports: [8001:8001]
+    volumes: [pfia_chroma_data:/chroma-data]
+    restart: unless-stopped
   api:
     build:
       context: .
@@ -9,6 +48,9 @@ services:
     env_file: [.env.example]
     environment:
       PFIA_DATA_DIR: /app/data/runtime
+      PFIA_CHROMA_MODE: http
+      PFIA_CHROMA_HOST: chroma
+      PFIA_CHROMA_PORT: 8001
     ports: [8000:8000]
     volumes: [pfia_data:/app/data/runtime]
     healthcheck:
@@ -31,10 +73,16 @@ services:
     env_file: [.env.example]
     environment:
       PFIA_DATA_DIR: /app/data/runtime
+      PFIA_CHROMA_MODE: http
+      PFIA_CHROMA_HOST: chroma
+      PFIA_CHROMA_PORT: 8001
     volumes: [pfia_data:/app/data/runtime]
     depends_on:
       api:
         condition: service_healthy
+      chroma:
+        condition: service_started
     restart: unless-stopped
 volumes:
   pfia_data:
+  pfia_chroma_data:

@@ -165,6 +165,18 @@ class QuoteRecord(BaseModel):
     created_at: datetime
 
 
+class ReviewPreview(BaseModel):
+    """Compact anonymized review payload used by simple-list presentation mode."""
+
+    review_id: str
+    source: str
+    created_at: datetime
+    language: str
+    text: str
+    flags: list[str] = Field(default_factory=list)
+    cluster_id: str | None = None
+
+
 class TrendSnippet(BaseModel):
     """Trend metadata returned as evidence for a cluster."""
 
@@ -228,6 +240,8 @@ class SessionRuntimeMetadata(BaseModel):
     """Operational metadata recorded for one completed processing run."""
 
     runtime_profile: str
+    presentation_mode: str = "clustered"
+    low_data_mode: bool = False
     trace_correlation_id: str
     trace_exporters_effective: list[str] = Field(default_factory=list)
     trace_local_path: str | None = None
@@ -262,9 +276,16 @@ class SessionRuntimeMetadata(BaseModel):
     records_total: int
     records_kept: int
     top_cluster_ids: list[str] = Field(default_factory=list)
+    weak_signal_cluster_ids: list[str] = Field(default_factory=list)
+    weak_signal_count: int = 0
+    mixed_sentiment_cluster_ids: list[str] = Field(default_factory=list)
+    mixed_sentiment_cluster_count: int = 0
+    mixed_language_review_count: int = 0
     data_dir: str
     embedded_worker: bool
     chroma_persist_dir: str | None = None
+    chroma_mode_effective: str | None = None
+    chroma_endpoint_effective: str | None = None
     agent_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
@@ -275,6 +296,11 @@ class SessionDetail(BaseModel):
     job: JobRecord
     preprocessing_summary: PreprocessingSummary | None = None
     clusters: list[ClusterRecord] = Field(default_factory=list)
+    top_clusters: list[ClusterRecord] = Field(default_factory=list)
+    weak_signals: list[ClusterRecord] = Field(default_factory=list)
+    simple_list_reviews: list[ReviewPreview] = Field(default_factory=list)
+    presentation_mode: str = "clustered"
+    warnings: list[str] = Field(default_factory=list)
     alerts: list[AlertRecord] = Field(default_factory=list)
     report: ReportArtifact | None = None
     runtime_metadata: SessionRuntimeMetadata | None = None

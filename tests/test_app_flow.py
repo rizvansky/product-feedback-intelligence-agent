@@ -31,8 +31,15 @@ def test_smoke_batch_flow(app, demo_file_path):
         assert session_payload["job"]["status"] == "COMPLETED"
         assert session_payload["report"]["markdown"].startswith("# PFIA Report")
         assert "## Runtime Metadata" in session_payload["report"]["markdown"]
+        assert "## Weak Signals" in session_payload["report"]["markdown"]
+        assert "Top quotes:" in session_payload["report"]["markdown"]
         assert len(session_payload["clusters"]) >= 5
+        assert len(session_payload["top_clusters"]) <= 5
+        assert session_payload["presentation_mode"] == "clustered"
+        assert session_payload["simple_list_reviews"]
         assert session_payload["runtime_metadata"]["runtime_profile"] == "deterministic"
+        assert session_payload["runtime_metadata"]["presentation_mode"] == "clustered"
+        assert session_payload["runtime_metadata"]["low_data_mode"] is False
         assert (
             session_payload["runtime_metadata"]["orchestrator_backend_effective"]
             == "langgraph"
@@ -66,6 +73,9 @@ def test_smoke_batch_flow(app, demo_file_path):
         assert (
             session_payload["runtime_metadata"]["embedding_backend_effective"]
             == "projection"
+        )
+        assert session_payload["runtime_metadata"]["weak_signal_count"] == len(
+            session_payload["weak_signals"]
         )
         assert "taxonomy_agent" in session_payload["runtime_metadata"]["agent_usage"]
 
@@ -193,3 +203,31 @@ def test_linear_orchestrator_fallback_still_completes(tmp_path, demo_file_path):
     assert detail["runtime_metadata"]["orchestrator_backend_effective"] == "linear"
     assert detail["runtime_metadata"]["retrieval_backend_effective"] == "local"
     assert detail["runtime_metadata"]["pii_backend_requested"] == "regex+spacy"
+
+
+def test_low_data_mode_switches_to_simple_list_view(tmp_path):
+    """Verify small batches activate the explicit simple-list presentation mode."""
+
+    settings = Settings(
+        data_dir=tmp_path / "runtime",
+        generation_backend="local",
+        embedding_backend="local",
+        openai_api_key="",
+        _env_file=None,
+    )
+    app = create_app(settings)
+    service: PFIAService = app.state.service
+    payload = """review_id,source,text,created_at
+r1,app_store,Payment crashes on checkout,2026-04-01T00:00:00Z
+r2,google_play,Login code is delayed again,2026-04-02T00:00:00Z
+r3,app_store,Dark mode looks great but billing is confusing,2026-04-03T00:00:00Z
+"""
+    upload = service.upload_file("small.csv", payload.encode("utf-8"), "text/csv")
+    service.process_job(upload.job_id)
+
+    detail = service.get_session_detail(upload.session_id)
+    assert detail["presentation_mode"] == "simple_list"
+    assert detail["runtime_metadata"]["low_data_mode"] is True
+    assert detail["simple_list_reviews"]
+    assert "## Low Data Mode" in detail["report"]["markdown"]
+    assert "## Simple List View" in detail["report"]["markdown"]
