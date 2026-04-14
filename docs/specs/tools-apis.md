@@ -32,8 +32,8 @@
 Политика:
 
 - primary provider: OpenAI;
-- fallback provider: Anthropic;
-- max 3 retries у primary и max 2 retries у fallback;
+- fallback providers: Mistral, затем Anthropic;
+- max 3 retries у primary и max 2 retries у каждого fallback provider;
 - circuit breaker открывается после 5 последовательных provider errors.
 
 ### Embedding adapter

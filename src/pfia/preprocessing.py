@@ -11,20 +11,8 @@ from typing import Any
 from pfia.config import Settings
 from pfia.errors import PFIAError
 from pfia.models import PreprocessingSummary, ReviewNormalized
+from pfia.privacy import has_residual_pii, mask_pii
 from pfia.utils import normalize_text, parse_datetime
-
-
-EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
-PHONE_RE = re.compile(r"(?:(?:\+|00)\d{1,3}[-\s()]*)?(?:\d[-\s()]*){9,14}\d")
-UUID_RE = re.compile(
-    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
-    re.IGNORECASE,
-)
-NAME_HINT_RE = re.compile(
-    r"\b(?:my name is|i am|i'm|меня зовут|это|зовут)\s+([A-ZА-Я][a-zа-я]{2,20})\b",
-    re.IGNORECASE,
-)
-URL_RE = re.compile(r"https?://\S+", re.IGNORECASE)
 
 INJECTION_PATTERNS = [
     re.compile(r"ignore previous instructions", re.IGNORECASE),
@@ -78,53 +66,6 @@ def detect_injection(text: str) -> bool:
         ``True`` when a suspicious pattern is detected.
     """
     return any(pattern.search(text) for pattern in INJECTION_PATTERNS)
-
-
-def mask_pii(text: str) -> tuple[str, int]:
-    """Mask obvious PII patterns in free-form review text.
-
-    Args:
-        text: Raw review text.
-
-    Returns:
-        Tuple of ``(masked_text, pii_hit_count)``.
-    """
-    pii_hits = 0
-
-    def _sub(pattern: re.Pattern[str], replacement: str, current: str) -> str:
-        """Apply one regex replacement and accumulate PII hit counters."""
-        nonlocal pii_hits
-        current, count = pattern.subn(replacement, current)
-        pii_hits += count
-        return current
-
-    masked = text
-    masked = _sub(EMAIL_RE, "[EMAIL]", masked)
-    masked = _sub(PHONE_RE, "[PHONE]", masked)
-    masked = _sub(UUID_RE, "[DEVICE_ID]", masked)
-    masked = _sub(URL_RE, "[URL]", masked)
-
-    def name_repl(match: re.Match[str]) -> str:
-        """Replace a name hint while preserving the triggering phrase."""
-        nonlocal pii_hits
-        pii_hits += 1
-        prefix = match.group(0).split()[0]
-        return f"{prefix} [PERSON]"
-
-    masked = NAME_HINT_RE.sub(name_repl, masked)
-    return masked, pii_hits
-
-
-def has_residual_pii(text: str) -> bool:
-    """Check whether masked text still appears to contain unresolved PII.
-
-    Args:
-        text: Masked review text.
-
-    Returns:
-        ``True`` when a high-confidence PII regex still matches.
-    """
-    return any(pattern.search(text) for pattern in (EMAIL_RE, PHONE_RE, UUID_RE))
 
 
 def is_low_information(text: str) -> bool:
@@ -259,12 +200,13 @@ def preprocess_upload(
         if source not in SUPPORTED_SOURCES:
             source = "web"
 
+        language = normalize_text(str(raw_record.get("language", ""))).lower()
         text_raw = normalize_text(str(raw_record["text"]))
-        text_masked, hits = mask_pii(text_raw)
+        language = language or detect_language(text_raw)
+        pii_result = mask_pii(text_raw, language, settings)
+        text_masked = pii_result.masked_text
+        hits = pii_result.pii_hits
         pii_hits += hits
-        language = normalize_text(
-            str(raw_record.get("language", ""))
-        ).lower() or detect_language(text_raw)
         if language == "unknown":
             unsupported_language_records += 1
 
@@ -306,6 +248,7 @@ def preprocess_upload(
             metadata={
                 "raw_index": index,
                 "ingested_from": upload_path.name,
+                "pii_backend_effective": pii_result.backend_effective,
             },
         )
         reviews.append(review)
@@ -371,6 +314,35 @@ def refresh_summary_flag_counts(
             ),
         }
     )
+
+
+def summarize_preprocessing_backends(
+    reviews: list[ReviewNormalized],
+) -> dict[str, str | list[str]]:
+    """Summarize effective preprocessing backends used across sanitized reviews.
+
+    Args:
+        reviews: Final sanitized reviews.
+
+    Returns:
+        Backend summary for runtime metadata and reporting.
+    """
+
+    pii_backends = sorted(
+        {
+            str(review.metadata.get("pii_backend_effective", "regex"))
+            for review in reviews
+        }
+    )
+    pii_backend_effective = (
+        pii_backends[0]
+        if len(pii_backends) == 1
+        else f"mixed({', '.join(pii_backends)})"
+    )
+    return {
+        "pii_backend_effective": pii_backend_effective,
+        "pii_backends_used": pii_backends,
+    }
 
 
 def _parse_rating(value: Any) -> int | None:

@@ -10,21 +10,77 @@ from pfia.models import (
     PreprocessingSummary,
     ReviewNormalized,
 )
-from pfia.openai_client import OpenAIClient
+from pfia.openai_client import (
+    AnthropicClient,
+    FallbackRoutingClient,
+    MistralClient,
+    OpenAIClient,
+)
 from pfia.utils import normalize_text, tokenize
 
 
-def openai_generation_enabled(settings: Settings) -> bool:
-    """Return whether OpenAI-backed generation should be used.
+def llm_generation_enabled(settings: Settings) -> bool:
+    """Return whether external LLM-backed generation should be used.
 
     Args:
         settings: Runtime configuration.
 
     Returns:
-        ``True`` when generation backend is ``openai`` and a key is configured.
+        ``True`` when generation backend is ``openai`` and at least one provider is configured.
     """
-    return settings.generation_backend == "openai" and bool(
-        settings.openai_api_key.strip()
+    return settings.generation_backend == "openai" and (
+        bool(settings.openai_api_key.strip())
+        or bool(settings.mistral_api_key.strip())
+        or bool(settings.anthropic_api_key.strip())
+    )
+
+
+def build_generation_client(
+    settings: Settings,
+    *,
+    http_client=None,
+    model: str | None = None,
+) -> FallbackRoutingClient:
+    """Construct the shared routed LLM client for runtime agent calls.
+
+    Args:
+        settings: Runtime configuration.
+        http_client: Optional injected HTTP client, mainly for tests.
+        model: Optional explicit model override.
+
+    Returns:
+        Configured provider-routing client instance.
+    """
+    primary = OpenAIClient(
+        api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
+        default_model=model or settings.llm_primary_model,
+        timeout_s=settings.openai_timeout_s,
+        max_retries=settings.openai_max_retries,
+        http_client=http_client,
+    )
+    fallback = MistralClient(
+        api_key=settings.mistral_api_key,
+        base_url=settings.mistral_base_url,
+        default_model=settings.llm_fallback_model,
+        timeout_s=settings.openai_timeout_s,
+        max_retries=settings.openai_max_retries,
+        http_client=http_client,
+    )
+    secondary_fallback = AnthropicClient(
+        api_key=settings.anthropic_api_key,
+        base_url=settings.anthropic_base_url,
+        default_model=settings.llm_second_fallback_model,
+        timeout_s=settings.openai_timeout_s,
+        max_retries=settings.openai_max_retries,
+        http_client=http_client,
+        api_version=settings.anthropic_api_version,
+    )
+    return FallbackRoutingClient(
+        primary=primary if primary.available else None,
+        fallbacks=[
+            client for client in (fallback, secondary_fallback) if client.available
+        ],
     )
 
 
@@ -33,25 +89,35 @@ def build_openai_client(
     *,
     http_client=None,
     model: str | None = None,
-) -> OpenAIClient:
-    """Construct the shared OpenAI client for runtime agent calls.
+) -> FallbackRoutingClient:
+    """Backward-compatible alias for the routed generation client builder."""
 
-    Args:
-        settings: Runtime configuration.
-        http_client: Optional injected HTTP client, mainly for tests.
-        model: Optional explicit model override.
-
-    Returns:
-        Configured OpenAI client instance.
-    """
-    return OpenAIClient(
-        api_key=settings.openai_api_key,
-        base_url=settings.openai_base_url,
-        default_model=model or settings.llm_primary_model,
-        timeout_s=settings.openai_timeout_s,
-        max_retries=settings.openai_max_retries,
+    return build_generation_client(
+        settings,
         http_client=http_client,
+        model=model,
     )
+
+
+def _client_mode(client: Any) -> str:
+    """Return the effective provider mode used by a routed LLM client."""
+
+    provider = getattr(client, "last_provider_used", None)
+    if isinstance(provider, str) and provider:
+        return provider
+    if isinstance(getattr(client, "provider_name", None), str):
+        return getattr(client, "provider_name")
+    return "openai"
+
+
+def _client_model(client: Any) -> str:
+    """Return the effective model name used by a routed LLM client."""
+
+    model = getattr(client, "last_model_used", None)
+    if isinstance(model, str) and model:
+        return model
+    default_model = getattr(client, "default_model", "")
+    return default_model if isinstance(default_model, str) else ""
 
 
 def refine_clusters_with_llm(
@@ -72,7 +138,7 @@ def refine_clusters_with_llm(
     Returns:
         Tuple of updated clusters and metadata about the agent run.
     """
-    if not openai_generation_enabled(settings) or not clusters:
+    if not llm_generation_enabled(settings) or not clusters:
         return clusters, {"used": False, "mode": "local"}
 
     review_by_id = {review.review_id: review for review in reviews}
@@ -166,8 +232,8 @@ def refine_clusters_with_llm(
 
     return refined, {
         "used": True,
-        "mode": "openai",
-        "model": agent_client.default_model,
+        "mode": _client_mode(agent_client),
+        "model": _client_model(agent_client),
         "changed_clusters": changed,
     }
 
@@ -198,7 +264,7 @@ def generate_executive_summary_with_llm(
     Returns:
         Tuple of optional summary text and metadata about the agent run.
     """
-    if not openai_generation_enabled(settings) or not clusters:
+    if not llm_generation_enabled(settings) or not clusters:
         return None, {"used": False, "mode": "local"}
 
     alert_payload = [
@@ -262,8 +328,8 @@ def generate_executive_summary_with_llm(
         return None, {"used": False, "mode": "fallback", "reason": "empty summary"}
     return summary, {
         "used": True,
-        "mode": "openai",
-        "model": agent_client.default_model,
+        "mode": _client_mode(agent_client),
+        "model": _client_model(agent_client),
     }
 
 
@@ -283,7 +349,7 @@ def review_preprocessing_flags_with_llm(
     Returns:
         Tuple of updated reviews and metadata about the classifier run.
     """
-    if not openai_generation_enabled(settings) or not reviews:
+    if not llm_generation_enabled(settings) or not reviews:
         return reviews, {"used": False, "mode": "local", "candidates": 0}
 
     candidates = []
@@ -385,8 +451,8 @@ def review_preprocessing_flags_with_llm(
 
     return updated_reviews, {
         "used": True,
-        "mode": "openai",
-        "model": agent_client.default_model,
+        "mode": _client_mode(agent_client),
+        "model": _client_model(agent_client),
         "candidates": len(candidates),
         "reviewed": reviewed,
         "removed_flags": removed_flags,
@@ -413,7 +479,7 @@ def review_clusters_with_llm(
     Returns:
         Tuple of updated clusters, updated review-to-cluster mapping, and metadata.
     """
-    if not openai_generation_enabled(settings) or len(clusters) < 2:
+    if not llm_generation_enabled(settings) or len(clusters) < 2:
         return clusters, cluster_by_review, {"used": False, "mode": "local"}
 
     review_by_id = {review.review_id: review for review in reviews}
@@ -527,8 +593,8 @@ def review_clusters_with_llm(
         updated_mapping,
         {
             "used": True,
-            "mode": "openai",
-            "model": agent_client.default_model,
+            "mode": _client_mode(agent_client),
+            "model": _client_model(agent_client),
             "merge_recommendations": len(merge_pairs),
             "split_recommendations": len(split_clusters),
             "applied_merges": merge_count,
@@ -557,7 +623,7 @@ def explain_alerts_with_llm(
         Tuple of updated alerts and metadata about the explainer run.
     """
     material_alerts = [alert for alert in alerts if not alert.insufficient_history]
-    if not openai_generation_enabled(settings) or not material_alerts:
+    if not llm_generation_enabled(settings) or not material_alerts:
         return alerts, {"used": False, "mode": "local", "alerts": len(material_alerts)}
 
     cluster_by_id = {cluster.cluster_id: cluster for cluster in clusters}
@@ -633,8 +699,8 @@ def explain_alerts_with_llm(
             updated.append(alert)
     return updated, {
         "used": True,
-        "mode": "openai",
-        "model": agent_client.default_model,
+        "mode": _client_mode(agent_client),
+        "model": _client_model(agent_client),
         "changed_alerts": changed,
     }
 

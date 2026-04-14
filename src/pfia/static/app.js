@@ -234,10 +234,27 @@ function renderRuntimeMeta(runtimeMetadata) {
 
   return `
     <div><strong>Runtime profile:</strong> ${runtimeMetadata.runtime_profile}</div>
+    <div><strong>Trace correlation id:</strong> <code>${runtimeMetadata.trace_correlation_id}</code></div>
+    <div><strong>Trace exporters:</strong> ${(runtimeMetadata.trace_exporters_effective || []).join(", ") || "n/a"}</div>
+    <div><strong>Local trace path:</strong> <code>${runtimeMetadata.trace_local_path || "n/a"}</code></div>
+    <div><strong>Orchestrator backend:</strong> ${runtimeMetadata.orchestrator_backend_effective} (requested: ${runtimeMetadata.orchestrator_backend_requested})</div>
+    <div><strong>PII backend:</strong> ${runtimeMetadata.pii_backend_effective} (requested: ${runtimeMetadata.pii_backend_requested})</div>
+    <div><strong>Sentiment backend:</strong> ${runtimeMetadata.sentiment_backend_effective} (requested: ${runtimeMetadata.sentiment_backend_requested})</div>
+    <div><strong>Sentiment model:</strong> ${runtimeMetadata.sentiment_model_effective || "n/a"}</div>
+    <div><strong>Embedding backend:</strong> ${(runtimeMetadata.embedding_backend_effective || runtimeMetadata.embedding_backend)} (requested: ${runtimeMetadata.embedding_backend_requested || runtimeMetadata.embedding_backend || "n/a"})</div>
+    <div><strong>Embedding model:</strong> ${runtimeMetadata.embedding_model_effective || "n/a"}</div>
     <div><strong>Generation backend:</strong> ${runtimeMetadata.generation_backend_effective} (requested: ${runtimeMetadata.generation_backend_requested})</div>
+    <div><strong>Retrieval backend:</strong> ${runtimeMetadata.retrieval_backend_effective} (requested: ${runtimeMetadata.retrieval_backend_requested})</div>
     <div><strong>Primary model:</strong> ${runtimeMetadata.llm_primary_model || "n/a"}</div>
+    <div><strong>LLM calls:</strong> ${runtimeMetadata.llm_call_count || 0}</div>
+    <div><strong>Embedding calls:</strong> ${runtimeMetadata.embedding_call_count || 0}</div>
+    <div><strong>Prompt / completion tokens:</strong> ${runtimeMetadata.prompt_tokens_total || 0} / ${runtimeMetadata.completion_tokens_total || 0}</div>
+    <div><strong>Embedding input tokens:</strong> ${runtimeMetadata.embedding_input_tokens_total || 0}</div>
+    <div><strong>Estimated session cost USD:</strong> ${(runtimeMetadata.estimated_cost_usd || 0).toFixed(6)}</div>
+    <div><strong>Fallback providers:</strong> Mistral=${runtimeMetadata.mistral_fallback_enabled ? "on" : "off"}, Anthropic=${runtimeMetadata.anthropic_fallback_enabled ? "on" : "off"}</div>
     <div><strong>Input file:</strong> <code>${runtimeMetadata.input_filename || "n/a"}</code></div>
     <div><strong>Run shape:</strong> ${runtimeMetadata.records_kept}/${runtimeMetadata.records_total} kept, ${runtimeMetadata.top_cluster_ids.length} top clusters</div>
+    <div><strong>Chroma dir:</strong> <code>${runtimeMetadata.chroma_persist_dir || "n/a"}</code></div>
     <div><strong>Agents used:</strong> ${usedAgents.length ? usedAgents.join(", ") : "deterministic-only path"}</div>
   `;
 }

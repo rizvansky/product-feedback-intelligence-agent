@@ -7,7 +7,7 @@ from typing import Any
 
 from pfia.config import Settings
 from pfia.errors import PFIAError, SessionNotReadyError
-from pfia.llm_agents import build_openai_client
+from pfia.llm_agents import build_openai_client, llm_generation_enabled
 from pfia.models import (
     ChatAnswer,
     ClusterHit,
@@ -57,7 +57,7 @@ def answer_question(
     if not session_ready:
         raise SessionNotReadyError()
 
-    if settings is not None and settings.openai_generation_enabled:
+    if settings is not None and llm_generation_enabled(settings):
         try:
             return _answer_question_with_llm(
                 index_path,
@@ -68,16 +68,18 @@ def answer_question(
         except PFIAError as exc:
             if exc.code == "NO_EVIDENCE_AVAILABLE":
                 raise
-            fallback = _answer_question_local(index_path, question)
+            fallback = _answer_question_local(index_path, question, settings=settings)
             return fallback.model_copy(update={"degraded_mode": True})
         except Exception:  # pragma: no cover - defensive fallback
-            fallback = _answer_question_local(index_path, question)
+            fallback = _answer_question_local(index_path, question, settings=settings)
             return fallback.model_copy(update={"degraded_mode": True})
 
-    return _answer_question_local(index_path, question)
+    return _answer_question_local(index_path, question, settings=settings)
 
 
-def _answer_question_local(index_path: Path, question: str) -> ChatAnswer:
+def _answer_question_local(
+    index_path: Path, question: str, *, settings: Settings | None = None
+) -> ChatAnswer:
     """Answer a question using the deterministic local retriever path.
 
     Args:
@@ -87,7 +89,7 @@ def _answer_question_local(index_path: Path, question: str) -> ChatAnswer:
     Returns:
         Grounded answer produced without LLM orchestration.
     """
-    retriever = SessionRetriever.load(index_path)
+    retriever = SessionRetriever.load(index_path, settings=settings)
     tool_trace: list[ToolTrace] = []
 
     if PRIORITY_RE.search(question):
@@ -196,7 +198,7 @@ def _answer_question_with_llm(
     settings: Settings,
     chat_history: list[dict[str, str]],
 ) -> ChatAnswer:
-    """Answer a question with an LLM planner and answer-writer agent.
+    """Answer a question with an external LLM planner and answer-writer agent.
 
     Args:
         index_path: Path to the persisted retrieval index.
@@ -205,9 +207,9 @@ def _answer_question_with_llm(
         chat_history: Recent chat turns to include in the planner context.
 
     Returns:
-        Grounded answer produced by the OpenAI-backed agent path.
+        Grounded answer produced by the external LLM agent path.
     """
-    retriever = SessionRetriever.load(index_path)
+    retriever = SessionRetriever.load(index_path, settings=settings)
     client = build_openai_client(settings)
     tool_trace: list[ToolTrace] = []
     observations: list[dict[str, Any]] = []

@@ -35,22 +35,56 @@ class Settings(BaseSettings):
     max_queue_depth: int = 3
     report_top_clusters: int = 10
     session_retention_days: int = 7
+    langsmith_tracing: bool = Field(default=False, alias="LANGSMITH_TRACING")
+    langsmith_api_key: str = Field(default="", alias="LANGSMITH_API_KEY")
+    langsmith_project: str = Field(default="pfia", alias="LANGSMITH_PROJECT")
+    langsmith_endpoint: str = Field(
+        default="https://api.smith.langchain.com", alias="LANGSMITH_ENDPOINT"
+    )
+    otel_tracing_enabled: bool = Field(default=False, alias="PFIA_OTEL_TRACING_ENABLED")
+    otlp_traces_endpoint: str = Field(
+        default="", alias="OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+    )
 
     clustering_min_cluster_size: int = 5
     clustering_min_samples: int = 2
     clustering_similarity_threshold: float = 0.03
+    clustering_reflection_threshold: float = 0.35
+    clustering_reflection_max_profiles: int = 3
+    clustering_max_cluster_count: int = 20
     retrieval_top_k: int = 5
+    retrieval_backend: str = "chroma"
+    orchestrator_backend: str = "langgraph"
+    pii_backend: str = "regex+spacy"
+    pii_spacy_ru_model: str = "ru_core_news_sm"
+    pii_spacy_en_model: str = "en_core_web_sm"
+    sentiment_backend: str = "vader"
 
     embedding_backend: str = "local"
+    embedding_primary_model: str = "text-embedding-3-small"
+    embedding_fallback_model: str = "paraphrase-multilingual-mpnet-base-v2"
+    embedding_batch_size: int = 128
     generation_backend: str = "local"
     llm_primary_model: str = "gpt-4o-mini"
-    llm_fallback_model: str = "local-template"
+    llm_fallback_model: str = "mistral-small-latest"
+    llm_second_fallback_model: str = "claude-3-5-haiku-latest"
     openai_timeout_s: float = 30.0
     openai_max_retries: int = 2
     llm_max_tool_steps: int = 4
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
     openai_base_url: str = Field(
         default="https://api.openai.com/v1", alias="OPENAI_BASE_URL"
+    )
+    mistral_api_key: str = Field(default="", alias="MISTRAL_API_KEY")
+    mistral_base_url: str = Field(
+        default="https://api.mistral.ai/v1", alias="MISTRAL_BASE_URL"
+    )
+    anthropic_api_key: str = Field(default="", alias="ANTHROPIC_API_KEY")
+    anthropic_base_url: str = Field(
+        default="https://api.anthropic.com/v1", alias="ANTHROPIC_BASE_URL"
+    )
+    anthropic_api_version: str = Field(
+        default="2023-06-01", alias="ANTHROPIC_API_VERSION"
     )
 
     prometheus_enabled: bool = True
@@ -96,10 +130,21 @@ class Settings(BaseSettings):
         return self.data_dir / "indexes"
 
     @property
+    def chroma_persist_dir(self) -> Path:
+        """Return the directory for persistent Chroma collections."""
+        return self.indexes_dir / "chroma"
+
+    @property
     def reports_dir(self) -> Path:
         """Return the directory for rendered Markdown reports."""
         assert self.data_dir is not None
         return self.data_dir / "reports"
+
+    @property
+    def traces_dir(self) -> Path:
+        """Return the directory for structured trace artifacts."""
+        assert self.data_dir is not None
+        return self.artifacts_dir / "traces"
 
     @property
     def raw_dir(self) -> Path:
@@ -119,16 +164,44 @@ class Settings(BaseSettings):
             self.uploads_dir,
             self.artifacts_dir,
             self.indexes_dir,
+            self.chroma_persist_dir,
             self.reports_dir,
             self.raw_dir,
             self.sanitized_dir,
+            self.traces_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
     @property
     def openai_generation_enabled(self) -> bool:
-        """Return whether OpenAI-backed agent generation is enabled."""
+        """Return whether the primary OpenAI provider is enabled."""
         return self.generation_backend == "openai" and bool(self.openai_api_key.strip())
+
+    @property
+    def mistral_generation_enabled(self) -> bool:
+        """Return whether Mistral fallback generation is enabled."""
+
+        return self.generation_backend == "openai" and bool(
+            self.mistral_api_key.strip()
+        )
+
+    @property
+    def llm_generation_enabled(self) -> bool:
+        """Return whether any external LLM provider is enabled."""
+
+        return self.generation_backend == "openai" and (
+            bool(self.openai_api_key.strip())
+            or bool(self.mistral_api_key.strip())
+            or bool(self.anthropic_api_key.strip())
+        )
+
+    @property
+    def anthropic_generation_enabled(self) -> bool:
+        """Return whether Anthropic tertiary fallback generation is enabled."""
+
+        return self.generation_backend == "openai" and bool(
+            self.anthropic_api_key.strip()
+        )
 
 
 @lru_cache(maxsize=1)

@@ -107,10 +107,54 @@ def main() -> None:
     print("FINAL_JOB_STATUS:", detail["job"]["status"])
     runtime_metadata = detail.get("runtime_metadata") or {}
     print("RUNTIME_PROFILE:", runtime_metadata.get("runtime_profile", "n/a"))
+    print("TRACE_CORRELATION_ID:", runtime_metadata.get("trace_correlation_id", "n/a"))
+    print(
+        "TRACE_EXPORTERS:",
+        runtime_metadata.get("trace_exporters_effective", []),
+    )
+    print("TRACE_LOCAL_PATH:", runtime_metadata.get("trace_local_path", "n/a"))
+    print(
+        "ORCHESTRATOR_BACKEND:",
+        runtime_metadata.get("orchestrator_backend_effective", "n/a"),
+    )
     print(
         "GENERATION_BACKEND:",
         runtime_metadata.get("generation_backend_effective", "n/a"),
     )
+    print(
+        "RETRIEVAL_BACKEND:",
+        runtime_metadata.get("retrieval_backend_effective", "n/a"),
+    )
+    print("PII_BACKEND:", runtime_metadata.get("pii_backend_effective", "n/a"))
+    print(
+        "SENTIMENT_BACKEND:",
+        runtime_metadata.get("sentiment_backend_effective", "n/a"),
+    )
+    print(
+        "SENTIMENT_MODEL:",
+        runtime_metadata.get("sentiment_model_effective", "n/a"),
+    )
+    print(
+        "EMBEDDING_BACKEND:",
+        runtime_metadata.get("embedding_backend_effective")
+        or runtime_metadata.get("embedding_backend", "n/a"),
+    )
+    print(
+        "EMBEDDING_MODEL:",
+        runtime_metadata.get("embedding_model_effective", "n/a"),
+    )
+    print("LLM_CALL_COUNT:", runtime_metadata.get("llm_call_count", 0))
+    print("EMBEDDING_CALL_COUNT:", runtime_metadata.get("embedding_call_count", 0))
+    print("PROMPT_TOKENS_TOTAL:", runtime_metadata.get("prompt_tokens_total", 0))
+    print(
+        "COMPLETION_TOKENS_TOTAL:",
+        runtime_metadata.get("completion_tokens_total", 0),
+    )
+    print(
+        "EMBEDDING_INPUT_TOKENS_TOTAL:",
+        runtime_metadata.get("embedding_input_tokens_total", 0),
+    )
+    print("ESTIMATED_COST_USD:", runtime_metadata.get("estimated_cost_usd", 0.0))
     print("PRIMARY_MODEL:", runtime_metadata.get("llm_primary_model", "n/a"))
     print("INPUT_FILENAME:", runtime_metadata.get("input_filename", "n/a"))
     print("TOP_CLUSTER_IDS:", runtime_metadata.get("top_cluster_ids", []))

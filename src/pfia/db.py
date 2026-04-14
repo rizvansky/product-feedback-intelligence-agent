@@ -46,6 +46,8 @@ CREATE TABLE IF NOT EXISTS job_events (
     event TEXT NOT NULL,
     level TEXT NOT NULL,
     message TEXT NOT NULL,
+    correlation_id TEXT,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL
 );
 
@@ -165,7 +167,22 @@ class Database:
         """Apply the embedded schema to the database."""
         with self._connect() as connection:
             connection.executescript(SCHEMA)
+            self._migrate_schema(connection)
             connection.commit()
+
+    def _migrate_schema(self, connection: sqlite3.Connection) -> None:
+        """Apply lightweight additive migrations for existing local databases."""
+
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(job_events)").fetchall()
+        }
+        if "correlation_id" not in columns:
+            connection.execute("ALTER TABLE job_events ADD COLUMN correlation_id TEXT")
+        if "metadata_json" not in columns:
+            connection.execute(
+                "ALTER TABLE job_events ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
+            )
 
     @contextmanager
     def connection(self) -> Iterator[sqlite3.Connection]:

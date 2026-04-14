@@ -1,6 +1,6 @@
 # Product Proposal
 
-> Примечание по текущему репозиторию: этот документ описывает исходный proposal и более широкий target design. Фактическая PoC-реализация в коде сейчас проще: FastAPI + static UI вместо Next.js, persisted on-disk retrieval index вместо отдельного Chroma service, OpenAI-backed multi-agent слой без LangGraph runtime и без Anthropic fallback. Для текущего runtime ориентироваться на `README`, `docs/llm-runtime.md` и `docs/testing-playbook.md`.
+> Примечание по текущему репозиторию: этот документ описывает исходный proposal и более широкий target design. Фактическая PoC-реализация в коде сейчас проще: FastAPI + static UI вместо Next.js, Chroma-backed retrieval внутри основного runtime вместо отдельного vector DB service, LLM-backed multi-agent слой с LangGraph batch orchestrator, `OpenAI` как primary provider, `Mistral` как fallback 1 и `Anthropic` как fallback 2. Для текущего runtime ориентироваться на `README`, `docs/llm-runtime.md` и `docs/testing-playbook.md`.
 
 ______________________________________________________________________
 
@@ -148,7 +148,7 @@ ______________________________________________________________________
 
 - **Размер батча**: прототип (PoC) рассчитан на обработку батчей до 2 000 записей. Если объём данных превышает это значение, запуск отклоняется с явным сообщением `INPUT_LIMIT_EXCEEDED`. Controlled chunking вынесен за рамки текущего PoC.
 
-- **Большая языковая модель (LLM)**: основная модель - GPT-4o-mini (OpenAI). Ценообразование: 0,15 доллара за 1 миллион входных токенов, 0,60 доллара за 1 миллион выходных токенов (тарифы OpenAI, актуальны на март 2026 года). Резервная модель (fallback) - Anthropic Claude Haiku.
+- **Большая языковая модель (LLM)**: основная модель - GPT-4o-mini (OpenAI). Ценообразование: 0,15 доллара за 1 миллион входных токенов, 0,60 доллара за 1 миллион выходных токенов (тарифы OpenAI, актуальны на март 2026 года). Резервные модели (fallback) - Mistral Small Latest и Anthropic Claude Haiku.
 
 - **Векторные представления (Embeddings)**: используется модель `text-embedding-3-small` со следующими параметрами:
 
@@ -267,7 +267,8 @@ ______________________________________________________________________
 |-----------|-----------|------------------------|
 | Оркестрация агентов | LangGraph (StateGraph) | github.com/langchain-ai/langgraph (лицензия MIT, LangChain Inc.) |
 | Основная LLM-модель | OpenAI GPT-4o-mini | platform.openai.com/docs/models/gpt-4o-mini; стоимость: 0,15 доллара за 1 миллион входных токенов, 0,60 доллара за 1 миллион выходных токенов (актуальные тарифы на март 2026 года) |
-| Резервная LLM-модель (fallback) | Anthropic Claude Haiku | docs.anthropic.com |
+| Резервная LLM-модель (fallback 1) | Mistral Small Latest | docs.mistral.ai |
+| Резервная LLM-модель (fallback 2) | Anthropic Claude Haiku | docs.anthropic.com |
 | Векторные представления (Embeddings, API) | `text-embedding-3-small` | platform.openai.com/docs/models/text-embedding-3-small; стоимость: 0,02 доллара за 1 миллион токенов; анонсирована 25 января 2024 года |
 | Векторные представления (Embeddings, локально) | `paraphrase-multilingual-mpnet-base-v2` | huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2 |
 | Кластеризация | HDBSCAN | Campello, Moulavi & Sander (2013), DOI: 10.1007/978-3-642-37456-2_14 |

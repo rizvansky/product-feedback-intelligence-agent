@@ -2,7 +2,7 @@
 
 PFIA - это PoC-система для пакетного анализа пользовательского фидбека: загрузка CSV/JSON, анонимизация PII, тематическая кластеризация, приоритизация проблем, anomaly detection, Markdown-отчёт и grounded Q&A по уже обработанной сессии.
 
-Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite и persisted retrieval index на диске. При наличии `OPENAI_API_KEY` можно включить OpenAI-backed multi-agent runtime, а при сбое или отсутствии ключа сервис автоматически возвращается к deterministic fallback path.
+Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite и persistent Chroma-backed retrieval с projection fallback. При наличии `OPENAI_API_KEY` можно включить proposal-grade embedding path (`text-embedding-3-small`) и LLM-backed multi-agent runtime, а при сбое внешних provider'ов сервис автоматически возвращается к local sentence-transformers или deterministic fallback path.
 
 ## Live Demo
 
@@ -57,7 +57,13 @@ PFIA - это PoC-система для пакетного анализа пол
   - `compare_clusters`;
   - `get_report_section`.
 - Runtime metadata для каждого completed run:
+  - effective orchestrator backend;
+  - trace correlation id;
   - effective backend;
+  - effective PII backend;
+  - effective sentiment backend;
+  - effective retrieval backend;
+  - provider call counts and token totals;
   - input filename;
   - records kept;
   - top cluster ids;
@@ -71,7 +77,7 @@ PFIA - это PoC-система для пакетного анализа пол
 
 - `api`: FastAPI-приложение, которое одновременно отдаёт HTTP API и статический frontend.
 - `worker`: отдельный Python worker для очереди jobs.
-- `storage`: SQLite + локальные файлы артефактов + persisted retrieval index на диске.
+- `storage`: SQLite + локальные файлы артефактов + persistent Chroma collections + session pickle fallback для retrieval.
 - `frontend`: статический UI, встроенный в web service.
 
 Это сделано сознательно ради PoC и будущего деплоя с минимальным operational overhead. Логические границы модулей из проектной документации сохранены, но контейнерная топология упрощена.
@@ -109,6 +115,14 @@ docker compose up --build
 `docker-compose.yml` использует `.env.example` с безопасными offline-дефолтами, так что для demo дополнительная настройка не нужна.
 
 Примечание: внутри Docker data dir принудительно переопределяется в `/app/data/runtime`, поэтому локальный host-path и контейнерный path не конфликтуют.
+Примечание: local `docker compose` по умолчанию собирает image без `spaCy`-моделей, чтобы сборка оставалась легче и быстрее.
+
+Если нужен proposal-grade privacy path в Docker локально:
+
+```bash
+PFIA_INSTALL_SPACY_MODELS=true docker compose build
+docker compose up -d
+```
 
 Остановка:
 
@@ -162,33 +176,71 @@ make test
 make demo
 ```
 
-### OpenAI Multi-Agent Mode
+### LLM Multi-Agent Mode
 
-Чтобы включить настоящий OpenAI-backed multi-agent runtime, задай в `.env`:
+Чтобы включить proposal-aligned runtime с `OpenAI` embeddings + generation, `Mistral` как generation fallback 1 и `Anthropic` как generation fallback 2, задай в `.env`:
 
 ```bash
+PFIA_ORCHESTRATOR_BACKEND=langgraph
+PFIA_RETRIEVAL_BACKEND=chroma
+PFIA_PII_BACKEND=regex+spacy
+PFIA_PII_SPACY_RU_MODEL=ru_core_news_sm
+PFIA_PII_SPACY_EN_MODEL=en_core_web_sm
+PFIA_SENTIMENT_BACKEND=vader
+PFIA_EMBEDDING_BACKEND=openai
+PFIA_EMBEDDING_PRIMARY_MODEL=text-embedding-3-small
+PFIA_EMBEDDING_FALLBACK_MODEL=paraphrase-multilingual-mpnet-base-v2
 PFIA_GENERATION_BACKEND=openai
 OPENAI_API_KEY=<your_openai_key>
+MISTRAL_API_KEY=<your_mistral_key>
+ANTHROPIC_API_KEY=<your_anthropic_key>
 PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini
+PFIA_LLM_FALLBACK_MODEL=mistral-small-latest
+PFIA_LLM_SECOND_FALLBACK_MODEL=claude-3-5-haiku-latest
 PFIA_LLM_MAX_TOOL_STEPS=4
 ```
 
+Чтобы privacy path действительно использовал `spaCy`, а не только `regex`, локально установи модели:
+
+```bash
+make install-spacy-models
+```
+
+На Railway отдельная ручная установка не нужна: production Docker image по умолчанию ставит `en_core_web_sm` и `ru_core_news_sm` во время build.
+
 Что меняется в этом режиме:
 
+- clustering и Chroma indexing сначала пытаются использовать `text-embedding-3-small`;
+- если embedding provider недоступен, runtime пытается перейти на local `sentence-transformers`, а затем на deterministic projection fallback;
+- privacy gate сначала использует regex, а при наличии локально установленных spaCy-моделей добавляет `ru_core_news_sm` / `en_core_web_sm` для masking person entities;
+- sentiment scoring сначала пытается использовать `VADER`, а для `ru` и при отсутствии зависимости автоматически откатывается на lexical fallback;
+- clustering engine прогоняет bounded HDBSCAN reflection loop: если silhouette ниже quality gate, он пробует до 3 профилей и сохраняет diagnostic trace в report/API;
 - `PreprocessReviewAgent` делает second-pass review для borderline heuristic flags;
 - `ClusterReviewAgent` делает LLM-guided merge/split review после детерминированной кластеризации;
 - кластерные label/summary уточняются через `TaxonomyAgent`;
 - anomaly explanations пишет `AnomalyExplainerAgent`;
 - executive summary пишет `ExecutiveSummaryAgent`;
 - Q&A выполняется через `QueryPlannerAgent` и `AnswerWriterAgent`, которые оркестрируют retrieval tools;
-- при проблемах с OpenAI система откатывается на локальный deterministic fallback вместо hard failure.
+- при проблемах с OpenAI система сначала пытается перейти на `Mistral`, затем на `Anthropic`, и только потом откатывается на локальный deterministic fallback.
 
-Как убедиться, что сработал именно OpenAI path, а не fallback:
+Как убедиться, что сработал именно внешний LLM path:
 
 - в UI и `GET /api/sessions/{session_id}` появляется `runtime_metadata`;
-- `runtime_profile` должен быть `openai-enhanced`;
-- `generation_backend_effective` должен быть `openai`;
-- в `agent_usage` хотя бы часть batch-агентов должна иметь `used=true` и `mode=openai`;
+- `runtime_profile` должен быть `llm-enhanced`;
+- `orchestrator_backend_effective` должен быть `langgraph`;
+- `pii_backend_effective` должен быть `regex` или `regex+spacy`;
+- `sentiment_backend_effective` должен быть `lexical`, `vader`, `hybrid` или `mixed(...)`;
+- `embedding_backend_effective` должен быть `openai`, `sentence-transformers`, `projection` или `mixed`;
+- `generation_backend_effective` должен быть `openai`, `mistral`, `anthropic` или `mixed`;
+- `retrieval_backend_effective` должен быть `chroma`;
+- `embedding_model_effective` должен быть `text-embedding-3-small`, `paraphrase-multilingual-mpnet-base-v2` или projection fallback model;
+- `sentiment_model_effective` должен быть `vaderSentiment` или `n/a`;
+- `trace_correlation_id` должен быть непустым;
+- `trace_exporters_effective` должен показывать хотя бы `local-jsonl`;
+- `trace_local_path` должен указывать на persisted JSONL trace file;
+- `llm_call_count`, `embedding_call_count`, token totals и provider usage summary должны появляться в runtime metadata/report;
+- в report `Run Diagnostics` должны появляться `Clustering backend`, `Selected clustering profile`, `Reflection attempts`;
+- в `agent_usage` хотя бы часть batch-агентов должна иметь `used=true` и `mode=openai`, `mode=mistral` или `mode=anthropic`;
 - в ответе `POST /api/sessions/{session_id}/chat` поле `degraded_mode` должно быть `false`.
 
 Почему архитектура сделана именно так:
@@ -198,6 +250,27 @@ PFIA_LLM_MAX_TOOL_STEPS=4
 - fallback обязателен, потому что PoC не должен зависеть от внешнего API как от единственной точки отказа.
 
 Подробное обоснование вынесено в [docs/llm-runtime.md](docs/llm-runtime.md).
+
+### Optional Tracing Sinks
+
+PFIA always writes structured traces to local JSONL on the runtime volume.
+
+Для optional external sinks можно задать:
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=<your_langsmith_key>
+LANGSMITH_PROJECT=pfia
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+PFIA_OTEL_TRACING_ENABLED=true
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://your-otlp-endpoint/v1/traces
+```
+
+Поведение:
+
+- local JSONL trace sink включён всегда;
+- LangSmith и OTLP sinks включаются только если заданы env vars и доступны зависимости;
+- observability sinks никогда не блокируют основной pipeline: при ошибке telemetry silently drops.
 
 ## Произвольный Прогон
 
@@ -258,7 +331,7 @@ python check.py --file path/to/reviews.csv --question "Which topic is spiking th
 
 - загружает указанный файл;
 - ждёт завершения batch-job;
-- печатает `runtime_profile`, `generation_backend_effective`, `input_filename`, `top_cluster_ids`;
+- печатает `runtime_profile`, `orchestrator_backend_effective`, `generation_backend_effective`, `retrieval_backend_effective`, `input_filename`, `top_cluster_ids`;
 - задаёт произвольный grounded question после завершения обработки.
 
 Если взять другой файл, другие размеры батча и другой вопрос, ответы и runtime metadata будут другими. Это самый простой способ показать, что демо не hardcoded.
@@ -298,7 +371,7 @@ python check.py --file path/to/reviews.csv --question "Which topic is spiking th
 
 - `POST /api/sessions/upload` - принять CSV/JSON и создать `session` + `job`
 - `GET /api/sessions/{session_id}` - статус, clusters, alerts, report, event timeline
-- `GET /api/sessions/{session_id}` также возвращает `runtime_metadata` с effective backend и agent usage
+- `GET /api/sessions/{session_id}` также возвращает `runtime_metadata` с effective orchestrator / generation / retrieval backends и agent usage
 - `GET /api/sessions/{session_id}/report` - report artifact
 - `POST /api/sessions/{session_id}/chat` - grounded Q&A
 - `GET /api/demo/sample-file` - скачать demo CSV
@@ -343,7 +416,7 @@ python check.py --file path/to/reviews.csv --question "Which topic is spiking th
 - recovery после рестарта worker
 - grounded priority Q&A
 - session runtime metadata
-- OpenAI-backed helper agents
+- external helper agents with provider fallback
 - planner/writer Q&A path
 - normalization structured writer output
 - LLM preprocessing review

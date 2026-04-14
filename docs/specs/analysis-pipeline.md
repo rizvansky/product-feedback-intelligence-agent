@@ -50,7 +50,7 @@
 
 - Primary backend: OpenAI embeddings.
 - Fallback backend: локальная sentence-transformer модель.
-- Batch size для внешнего провайдера: 100 текстов.
+- Batch size для внешнего провайдера: 128 текстов.
 - Если оба backend недоступны, система помечает session как `degraded_retrieval_only`, но пайплайн может продолжить scoring и report по детерминированным агрегатам.
 
 ## Clustering policy
@@ -65,6 +65,12 @@
 Правила:
 
 - Если silhouette `< 0.35`, оркестратор пробует до 3 профилей.
+- Diagnostic trace сохраняет:
+  - выбранный backend кластеризации;
+  - выбранный профиль;
+  - число попыток reflection loop;
+  - quality gate result;
+  - cluster-count gate result.
 - Если после всех попыток quality gate не пройден, включается weak-signals mode:
   - малые кластеры сохраняются;
   - label и summary помечаются `low_confidence`;
@@ -81,6 +87,7 @@
 ## Hybrid preprocessing review
 
 - Regex и простые эвристики остаются first-pass фильтрами.
+- При наличии локально установленных spaCy-моделей privacy stage дополнительно маскирует person entities через `ru_core_news_sm` / `en_core_web_sm`.
 - Если доступен OpenAI runtime, `PreprocessReviewAgent` делает second-pass review для пограничных случаев:
   - `spam`;
   - `injection_suspected`;
@@ -88,6 +95,10 @@
 - При недоступности OpenAI базовые heuristic flags сохраняются без hard failure.
 
 ## Scoring
+
+- Primary sentiment backend: `VADER`.
+- Fallback sentiment backend: deterministic lexical scorer для `ru` и для сред без `vaderSentiment`.
+- Runtime metadata фиксирует effective sentiment backend и model.
 
 Формула PoC:
 

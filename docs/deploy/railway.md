@@ -1,6 +1,6 @@
 # Railway Deploy Runbook
 
-Этот runbook описывает рекомендуемый hosted deploy для текущего PoC: один Railway web service + один persistent volume. Для этого проекта это лучший operational tradeoff, потому что runtime state хранится в SQLite, report artifacts и retrieval index на локальном диске.
+Этот runbook описывает рекомендуемый hosted deploy для текущего PoC: один Railway web service + один persistent volume. Для этого проекта это лучший operational tradeoff, потому что runtime state хранится в SQLite, report artifacts и persistent Chroma storage на локальном диске.
 
 ## Целевой Профиль
 
@@ -49,14 +49,27 @@
 - `PFIA_LOG_LEVEL=INFO`
 - `PFIA_MAX_QUEUE_DEPTH=3`
 - `PFIA_MAX_BATCH_SIZE=2000`
+- `PFIA_ORCHESTRATOR_BACKEND=langgraph`
+- `PFIA_RETRIEVAL_BACKEND=chroma`
+- `PFIA_PII_BACKEND=regex+spacy`
+- `PFIA_SENTIMENT_BACKEND=vader`
+- `PFIA_EMBEDDING_BACKEND=openai`
 
 Опционально:
 
-- `PFIA_GENERATION_BACKEND=openai`, если нужен OpenAI-backed runtime
-- `OPENAI_API_KEY`, если позже понадобится реальная внешняя генерация
+- `PFIA_GENERATION_BACKEND=openai`, если нужен LLM-backed runtime
+- `OPENAI_API_KEY`, если нужен primary provider OpenAI
+- `MISTRAL_API_KEY`, если нужен fallback provider Mistral
+- `ANTHROPIC_API_KEY`, если нужен tertiary fallback provider Anthropic
 - `PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini`
+- `PFIA_LLM_FALLBACK_MODEL=mistral-small-latest`
+- `PFIA_LLM_SECOND_FALLBACK_MODEL=claude-3-5-haiku-latest`
+- `PFIA_EMBEDDING_PRIMARY_MODEL=text-embedding-3-small`
+- `PFIA_EMBEDDING_FALLBACK_MODEL=paraphrase-multilingual-mpnet-base-v2`
 - `PFIA_LLM_MAX_TOOL_STEPS=4`
 - `OPENAI_BASE_URL`, если будет прокси или совместимый endpoint
+- `MISTRAL_BASE_URL`, если нужен совместимый endpoint
+- `ANTHROPIC_BASE_URL`, если нужен совместимый endpoint
 
 Не нужно вручную задавать:
 
@@ -64,13 +77,22 @@
 - `PFIA_DATA_DIR`: при наличии volume путь будет вычислен автоматически
 - `PFIA_EMBEDDED_WORKER`: при наличии Railway volume режим включится автоматически
 
-## Как Включить OpenAI На Railway
+## Как Включить LLM Providers На Railway
 
 Добавить в Railway service variables:
 
 - `PFIA_GENERATION_BACKEND=openai`
+- `PFIA_ORCHESTRATOR_BACKEND=langgraph`
+- `PFIA_RETRIEVAL_BACKEND=chroma`
+- `PFIA_EMBEDDING_BACKEND=openai`
 - `OPENAI_API_KEY=<your_openai_key>`
+- `MISTRAL_API_KEY=<your_mistral_key>`
+- `ANTHROPIC_API_KEY=<your_anthropic_key>`
+- `PFIA_EMBEDDING_PRIMARY_MODEL=text-embedding-3-small`
+- `PFIA_EMBEDDING_FALLBACK_MODEL=paraphrase-multilingual-mpnet-base-v2`
 - `PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini`
+- `PFIA_LLM_FALLBACK_MODEL=mistral-small-latest`
+- `PFIA_LLM_SECOND_FALLBACK_MODEL=claude-3-5-haiku-latest`
 - `PFIA_LLM_MAX_TOOL_STEPS=4`
 - опционально `PFIA_OPENAI_TIMEOUT_S=30`
 - опционально `PFIA_OPENAI_MAX_RETRIES=2`
@@ -80,16 +102,22 @@
 Что изменится:
 
 - batch-стадии смогут использовать `PreprocessReviewAgent`, `ClusterReviewAgent`, `TaxonomyAgent`, `AnomalyExplainerAgent`, `ExecutiveSummaryAgent`;
+- privacy stage сможет реально использовать `regex+spacy`, потому что Railway image по умолчанию устанавливает `en_core_web_sm` и `ru_core_news_sm`;
+- embeddings и Chroma indexing сначала пойдут через `text-embedding-3-small`, потом через local `sentence-transformers`, затем через deterministic projection fallback;
 - Q&A пойдёт через `QueryPlannerAgent` и `AnswerWriterAgent`;
-- при проблемах с OpenAI runtime автоматически вернётся к deterministic fallback path вместо hard failure.
+- при проблемах с `OpenAI` runtime сначала попытается перейти на `Mistral`, затем на `Anthropic`, и только потом вернётся к deterministic fallback path.
 
-Как проверить, что на Railway реально работает OpenAI:
+Как проверить, что на Railway реально работает внешний LLM path:
 
 - выполнить batch-run;
 - открыть `GET /api/sessions/{session_id}`;
-- проверить, что `runtime_metadata.runtime_profile=openai-enhanced`;
-- проверить, что `runtime_metadata.generation_backend_effective=openai`;
-- проверить, что в `runtime_metadata.agent_usage` есть `used=true` и `mode=openai`;
+- проверить, что `runtime_metadata.runtime_profile=llm-enhanced`;
+- проверить, что `runtime_metadata.orchestrator_backend_effective=langgraph`;
+- проверить, что `runtime_metadata.pii_backend_effective=regex+spacy`;
+- проверить, что `runtime_metadata.embedding_backend_effective` равно `openai`, `sentence-transformers`, `projection` или `mixed`;
+- проверить, что `runtime_metadata.generation_backend_effective` равно `openai`, `mistral`, `anthropic` или `mixed`;
+- проверить, что `runtime_metadata.retrieval_backend_effective=chroma`;
+- проверить, что в `runtime_metadata.agent_usage` есть `used=true` и `mode=openai`, `mode=mistral` или `mode=anthropic`;
 - проверить, что `POST /api/sessions/{session_id}/chat` возвращает `degraded_mode=false`.
 
 ## Что Проверить После Деплоя
@@ -107,6 +135,7 @@
 - `/health/ready` возвращает `200`
 - в `/health/ready` видно `worker.mode=embedded`
 - `storage.data_dir` указывает на `/data/runtime`
+- после batch-run `PII_BACKEND` в `check.py --base-url <url>` должен быть `regex+spacy`
 
 Затем проверить пользовательский flow:
 

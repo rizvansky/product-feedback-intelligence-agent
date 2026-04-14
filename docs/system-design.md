@@ -63,7 +63,8 @@ PFIA реализуется как single-node система в Docker Compose 
   - локальный volume для upload-файлов, анонимизированных артефактов и сгенерированных Markdown-отчётов.
 - **Provider Layer**:
   - OpenAI как primary provider для embeddings и генерации;
-  - Anthropic Claude Haiku как fallback для generation;
+  - Mistral Small Latest как fallback 1 для generation;
+  - Anthropic Claude Haiku как fallback 2 для generation;
   - локальная sentence-transformer модель как fallback для embeddings;
   - spaCy и regex как локальные детерминированные зависимости.
 - **Observability Layer**:
@@ -234,8 +235,9 @@ ______________________________________________________________________
 | Интеграция | Роль | Timeout | Retry | Fallback |
 |---|---|---|---|---|
 | OpenAI Embeddings | Primary embeddings | 20 c | 3 попытки, exponential backoff | локальная embedding-модель, затем lexical-only retrieval |
-| OpenAI Generation | Primary labeling / summary / Q&A | 25 c | 3 попытки | Anthropic Haiku, затем template/degraded mode |
-| Anthropic Generation | Secondary generation provider | 25 c | 2 попытки | template/degraded mode |
+| OpenAI Generation | Primary labeling / summary / Q&A | 25 c | 3 попытки | Mistral Small Latest, затем Anthropic Haiku, затем template/degraded mode |
+| Mistral Generation | Secondary generation provider | 25 c | 2 попытки | Anthropic Haiku, затем template/degraded mode |
+| Anthropic Generation | Tertiary generation provider | 25 c | 2 попытки | template/degraded mode |
 | LangSmith / OTLP sink | Трассировка и диагностика | 5 c | 1 попытка | silent drop, чтобы observability не блокировала pipeline |
 
 ### 9.3 Правила вызова внешних API

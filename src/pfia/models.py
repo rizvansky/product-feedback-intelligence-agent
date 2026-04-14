@@ -228,11 +228,35 @@ class SessionRuntimeMetadata(BaseModel):
     """Operational metadata recorded for one completed processing run."""
 
     runtime_profile: str
+    trace_correlation_id: str
+    trace_exporters_effective: list[str] = Field(default_factory=list)
+    trace_local_path: str | None = None
+    orchestrator_backend_requested: str
+    orchestrator_backend_effective: str
     generation_backend_requested: str
     generation_backend_effective: str
+    retrieval_backend_requested: str
+    retrieval_backend_effective: str
+    pii_backend_requested: str
+    pii_backend_effective: str
+    sentiment_backend_requested: str
+    sentiment_backend_effective: str
+    sentiment_model_effective: str | None = None
     embedding_backend: str
+    embedding_backend_requested: str | None = None
+    embedding_backend_effective: str | None = None
+    embedding_model_effective: str | None = None
     openai_generation_enabled: bool
+    mistral_fallback_enabled: bool
+    anthropic_fallback_enabled: bool
     llm_primary_model: str | None = None
+    llm_call_count: int = 0
+    embedding_call_count: int = 0
+    prompt_tokens_total: int = 0
+    completion_tokens_total: int = 0
+    embedding_input_tokens_total: int = 0
+    estimated_cost_usd: float = 0.0
+    provider_usage_summary: dict[str, dict[str, Any]] = Field(default_factory=dict)
     input_filename: str | None = None
     input_content_type: str | None = None
     records_total: int
@@ -240,6 +264,7 @@ class SessionRuntimeMetadata(BaseModel):
     top_cluster_ids: list[str] = Field(default_factory=list)
     data_dir: str
     embedded_worker: bool
+    chroma_persist_dir: str | None = None
     agent_usage: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 

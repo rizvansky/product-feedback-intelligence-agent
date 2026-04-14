@@ -2,14 +2,16 @@
 
 ## Purpose
 
-This note explains which parts of PFIA are deterministic, which are hybrid, which are LLM-first, and why the runtime falls back automatically when OpenAI is unavailable.
+This note explains which parts of PFIA are deterministic, which are hybrid, which are LLM-first, and why the runtime falls back automatically when `OpenAI`, `Mistral`, or `Anthropic` is unavailable.
 
 ## Runtime Router
 
 PFIA uses a simple rule:
 
-- if `PFIA_GENERATION_BACKEND=openai` and `OPENAI_API_KEY` is configured, the service attempts the OpenAI-backed agent path;
-- if the key is missing, the upstream call fails, or the model returns unusable output, PFIA falls back to the deterministic path instead of failing the whole job.
+- if `PFIA_GENERATION_BACKEND=openai` and `OPENAI_API_KEY` is configured, the service attempts the `OpenAI` agent path first;
+- if `OpenAI` fails and `MISTRAL_API_KEY` is configured, the service retries through `Mistral`;
+- if `Mistral` also fails and `ANTHROPIC_API_KEY` is configured, the service retries through `Anthropic`;
+- if no external provider succeeds, PFIA falls back to the deterministic path instead of failing the whole job.
 
 This keeps the PoC demoable and deployable even when external APIs are unavailable.
 
@@ -57,7 +59,7 @@ The LLM layer is applied where it creates clear value:
 
 ## Agents Implemented in Code
 
-Current OpenAI-backed agents:
+Current LLM-backed agents:
 
 - `PreprocessReviewAgent`
 - `ClusterReviewAgent`
@@ -87,7 +89,7 @@ PFIA surfaces the effective runtime path in two places:
 
 This metadata is meant to answer operational questions such as:
 
-- whether the run was `deterministic` or `openai-enhanced`;
-- which generation backend was requested vs actually used;
+- whether the run was `deterministic` or `llm-enhanced`;
+- which generation backend was requested vs actually used (`openai`, `mistral`, `anthropic`, `mixed`, or `local`);
 - which input file was processed;
-- which specialized agents ran in `openai` mode vs local fallback.
+- which specialized agents ran in `openai`, `mistral`, or `anthropic` mode vs local fallback.

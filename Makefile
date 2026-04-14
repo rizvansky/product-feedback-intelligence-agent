@@ -1,7 +1,11 @@
-.PHONY: install test run-api run-worker run-embedded demo
+.PHONY: install install-spacy-models test run-api run-worker run-embedded demo
 
 install:
 	./.venv/bin/python -m pip install -e ".[dev]"
+
+install-spacy-models:
+	./.venv/bin/python -m spacy download en_core_web_sm
+	./.venv/bin/python -m spacy download ru_core_news_sm
 
 test:
 	./.venv/bin/python -m pytest -q

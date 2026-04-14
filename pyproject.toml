@@ -15,8 +15,13 @@ dependencies = [
   "python-multipart>=0.0.26",
   "numpy>=2.2.6",
   "scikit-learn>=1.7.2",
+  "chromadb>=1.5.7",
+  "langgraph>=1.1.6",
   "httpx>=0.28.1",
   "prometheus-client>=0.25.0",
+  "sentence-transformers>=5.1.1",
+  "spacy>=3.8.7",
+  "vaderSentiment>=3.3.2",
 ]
 
 [project.optional-dependencies]

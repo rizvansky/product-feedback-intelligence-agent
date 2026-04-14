@@ -1,6 +1,6 @@
 # Retriever
 
-> Примечание по текущему runtime: в коде репозитория retriever реализован как persisted on-disk session index с TF-IDF + cosine similarity + keyword overlap. Этот spec сохраняет target vocabulary (`reviews_vector`, `clusters_vector`, `Chroma`) как более широкий design-level reference, но фактический PoC сейчас не поднимает отдельный Chroma service.
+> Примечание по текущему runtime: в коде репозитория retriever уже использует persistent Chroma collections (`reviews_vector`, `clusters_vector`) внутри основного application runtime. SQLite остаётся source of truth для state, а session pickle payload хранит lexical fallback, trends, report sections и сериализованные vectorizers/projectors на случай деградации Chroma.
 
 ## Назначение
 
@@ -20,7 +20,7 @@ Retriever обслуживает Q&A поверх уже построенных 
 |---|---|---|
 | `reviews_vector` | semantic recall на уровне отзывов | Chroma |
 | `clusters_vector` | semantic recall на уровне тем | Chroma |
-| `cluster_fts` | keyword fallback по label / summary / quotes | SQLite FTS |
+| `cluster_fts` | keyword fallback по label / summary / quotes | session-local lexical index |
 
 ## Поисковый pipeline
 
@@ -64,7 +64,7 @@ Retriever обслуживает Q&A поверх уже построенных 
 | Режим | Когда включается | Что теряется |
 |---|---|---|
 | `hybrid` | нормальный режим | ничего |
-| `keyword_only` | нет embeddings или Chroma | падает semantic recall |
+| `keyword_only` | недоступен Chroma или dense semantic layer | падает semantic recall |
 | `summary_only` | нет review-level index | меньше цитат, хуже детализация |
 
 ## Guardrails

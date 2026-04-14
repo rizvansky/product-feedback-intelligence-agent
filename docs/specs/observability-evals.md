@@ -20,10 +20,10 @@
 
 ### Providers
 
-- `pfia_llm_calls_total` по provider/model;
-- `pfia_llm_errors_total` по error code;
-- `pfia_embedding_calls_total`;
-- `pfia_provider_circuit_open_total`.
+- `pfia_llm_calls_total` по provider/model/operation/status;
+- `pfia_llm_errors_total` по provider/error code;
+- `pfia_embedding_calls_total` по provider/model/status;
+- `pfia_provider_latency_seconds` по provider/model/operation.
 
 ### Budget / privacy
 
@@ -48,6 +48,7 @@
 
 - start/end stage;
 - provider call;
+- `qna.retrieve` и `qna.generate`;
 - retry;
 - degraded mode activation;
 - privacy gate result;
@@ -67,6 +68,15 @@
 - `qna.retrieve`;
 - `qna.generate`.
 
+Базовый sink:
+
+- local JSONL на runtime volume.
+
+Optional sinks:
+
+- LangSmith;
+- OTLP / OpenTelemetry exporter.
+
 ## Alerts
 
 | Условие | Реакция |
@@ -74,7 +84,7 @@
 | `degraded_jobs_total` растёт серией | проверить providers и budget caps |
 | `pii_quarantine_total > 0` на demo наборе | блокирующая проверка до релиза |
 | `job_latency_seconds p95 > 45s` | оптимизация batch sizes / provider timeouts |
-| `provider_circuit_open_total > 0` | переключить demo на fallback profile |
+| `llm_errors_total` быстро растёт | проверить upstream provider и fallback chain |
 
 ## Evals и acceptance checks
 
@@ -84,6 +94,7 @@
 - regression test на PII masking;
 - regression test на recovery после рестарта worker;
 - offline eval retrieval на фиксированном наборе вопросов;
+- проверка наличия `correlation_id` и provider events в stage log;
 - проверка, что degraded mode явно виден в отчёте и API.
 
 ## Definition of done для infra-ready PoC
@@ -91,4 +102,5 @@
 - есть dashboard или хотя бы экспортируемый набор метрик;
 - есть воспроизводимый тест на recovery и fallback;
 - есть явный лог и trace для каждого внешнего provider call;
+- есть persisted trace artifact на локальном volume;
 - нет raw PII в логах и индексах.

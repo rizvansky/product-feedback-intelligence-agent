@@ -50,7 +50,7 @@
 1. Нормализация кодировки и временных полей.
 1. Удаление полных дубликатов по `dedupe_hash`.
 1. Детекция языка.
-1. PII masking через regex + spaCy NER.
+1. PII masking через regex + optional spaCy NER (`ru_core_news_sm` / `en_core_web_sm`).
 1. Injection scan по сигнатурам и длине.
 1. Эвристика low-information / spam.
 1. Запись sanitized JSONL на локальный volume.
@@ -80,3 +80,4 @@
 - Нельзя запускать embeddings до завершения privacy gate.
 - Raw input не должен попадать в SQLite, Chroma и логи в открытом виде.
 - Sanitized JSONL должен быть воспроизводимым: повторный прогон даёт тот же `dedupe_hash`.
+- Runtime metadata должен фиксировать effective PII backend для completed run.

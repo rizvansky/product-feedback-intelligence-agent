@@ -14,55 +14,17 @@ from sklearn.metrics import silhouette_score
 from sklearn.preprocessing import Normalizer
 
 from pfia.config import Settings
+from pfia.embeddings import embed_texts
+from pfia.errors import PFIAError
 from pfia.models import AlertRecord, ClusterRecord, ReviewNormalized
-from pfia.utils import normalize_text, slugify, tokenize
+from pfia.sentiment import compute_sentiment
+from pfia.utils import normalize_text, slugify
 
 try:
     import hdbscan
 except ImportError:  # pragma: no cover - optional dependency in local dev only
     hdbscan = None
 
-
-POSITIVE_WORDS = {
-    "good",
-    "great",
-    "love",
-    "fast",
-    "stable",
-    "smooth",
-    "helpful",
-    "excellent",
-    "amazing",
-    "удобно",
-    "отлично",
-    "круто",
-    "быстро",
-    "нравится",
-    "полезно",
-    "стабильно",
-}
-
-NEGATIVE_WORDS = {
-    "bad",
-    "broken",
-    "bug",
-    "bugs",
-    "crash",
-    "crashes",
-    "slow",
-    "hate",
-    "problem",
-    "annoying",
-    "terrible",
-    "ошибка",
-    "плохо",
-    "медленно",
-    "лагает",
-    "сломано",
-    "вылетает",
-    "ужасно",
-    "баг",
-}
 
 STOPWORDS = {
     "a",
@@ -223,6 +185,18 @@ class AnalysisArtifacts:
     degraded_mode: bool
 
 
+@dataclass
+class ClusteringAttempt:
+    """Diagnostic snapshot for one clustering profile attempt."""
+
+    profile_name: str
+    backend: str
+    quality_score: float
+    cluster_count: int
+    noise_fraction: float
+    accepted: bool
+
+
 def analyze_reviews(
     session_id: str, reviews: list[ReviewNormalized], settings: Settings
 ) -> AnalysisArtifacts:
@@ -243,17 +217,32 @@ def analyze_reviews(
         enriched_text(review.text_anonymized, concepts_by_review[review.review_id])
         for review in reviews
     ]
-    sentiment_by_review = {
-        review.review_id: compute_sentiment(review.text_anonymized)
+    sentiment_results = {
+        review.review_id: compute_sentiment(
+            review.text_anonymized, review.language, settings
+        )
         for review in reviews
     }
+    sentiment_by_review = {
+        review_id: result.score for review_id, result in sentiment_results.items()
+    }
+    sentiment_backends_used = sorted(
+        {result.backend_effective for result in sentiment_results.values()}
+    )
+    sentiment_models_used = sorted(
+        {
+            result.model_effective
+            for result in sentiment_results.values()
+            if result.model_effective
+        }
+    )
 
+    labels, quality, clustering_meta = _cluster_texts(texts, settings)
     if len(reviews) < settings.clustering_min_cluster_size:
         labels = np.zeros(len(reviews), dtype=int)
         quality = 0.0
         degraded_mode = True
     else:
-        labels, quality = _cluster_texts(texts, settings)
         degraded_mode = quality < settings.clustering_similarity_threshold
 
     temp_cluster_by_review, grouped = _group_labels(reviews, labels)
@@ -291,30 +280,28 @@ def analyze_reviews(
             "quality_score": quality,
             "total_clusters": len(enriched_clusters),
             "degraded_reason": "low_clustering_quality" if degraded_mode else None,
+            "sentiment_backend_effective": (
+                sentiment_backends_used[0]
+                if len(sentiment_backends_used) == 1
+                else f"mixed({', '.join(sentiment_backends_used)})"
+            ),
+            "sentiment_backends_used": sentiment_backends_used,
+            "sentiment_model_effective": sentiment_models_used[0]
+            if len(sentiment_models_used) == 1
+            else (
+                f"mixed({', '.join(sentiment_models_used)})"
+                if sentiment_models_used
+                else None
+            ),
+            **clustering_meta,
         },
         degraded_mode=degraded_mode,
     )
 
 
-def compute_sentiment(text: str) -> float:
-    """Estimate sentiment on a simple bounded scale using lexical heuristics.
-
-    Args:
-        text: Review text.
-
-    Returns:
-        Sentiment score in the ``[-1.0, 1.0]`` range.
-    """
-    tokens = tokenize(text)
-    if not tokens:
-        return 0.0
-    positive = sum(1 for token in tokens if token in POSITIVE_WORDS)
-    negative = sum(1 for token in tokens if token in NEGATIVE_WORDS)
-    score = (positive - negative) / max(1, len(tokens))
-    return float(max(-1.0, min(1.0, score * 4)))
-
-
-def _cluster_texts(texts: list[str], settings: Settings) -> tuple[np.ndarray, float]:
+def _cluster_texts(
+    texts: list[str], settings: Settings
+) -> tuple[np.ndarray, float, dict[str, Any]]:
     """Cluster texts with HDBSCAN when available and a deterministic fallback.
 
     Args:
@@ -322,8 +309,204 @@ def _cluster_texts(texts: list[str], settings: Settings) -> tuple[np.ndarray, fl
         settings: Runtime clustering configuration.
 
     Returns:
-        Tuple of ``(labels, quality_score)``.
+        Tuple of ``(labels, quality_score, embedding_metadata)``.
     """
+    embeddings, embedding_meta = _build_clustering_embeddings(texts, settings)
+    n_samples = len(embeddings)
+    if n_samples < 3 or embeddings.shape[1] < 2:
+        return (
+            np.zeros(n_samples, dtype=int),
+            0.0,
+            {
+                **embedding_meta,
+                "clustering_backend_effective": "degenerate",
+                "clustering_selected_profile": "degenerate",
+                "clustering_reflection_triggered": False,
+                "clustering_reflection_attempt_count": 0,
+                "clustering_quality_gate_threshold": settings.clustering_reflection_threshold,
+                "clustering_quality_gate_passed": False,
+                "clustering_cluster_count_gate_passed": False,
+                "clustering_attempts": [],
+            },
+        )
+
+    attempts: list[ClusteringAttempt] = []
+    best_labels = np.zeros(n_samples, dtype=int)
+    best_quality = 0.0
+    best_backend = "agglomerative"
+    best_profile = "agglomerative_fallback"
+
+    if hdbscan is not None:
+        hdbscan_labels, hdbscan_quality, hdbscan_attempts = _run_hdbscan_reflection(
+            embeddings, settings
+        )
+        attempts.extend(hdbscan_attempts)
+        best_labels = hdbscan_labels
+        best_quality = hdbscan_quality
+        if hdbscan_attempts:
+            best_attempt = max(
+                hdbscan_attempts,
+                key=lambda attempt: (
+                    attempt.quality_score,
+                    -attempt.cluster_count,
+                    attempt.profile_name,
+                ),
+            )
+            best_backend = best_attempt.backend
+            best_profile = best_attempt.profile_name
+
+    fallback_labels, fallback_quality, fallback_attempts = _agglomerative_profile(
+        embeddings
+    )
+    attempts.extend(fallback_attempts)
+    if fallback_quality > best_quality:
+        best_labels = fallback_labels
+        best_quality = fallback_quality
+        best_backend = "agglomerative"
+        fallback_best_attempt = (
+            max(
+                fallback_attempts,
+                key=lambda attempt: (
+                    attempt.quality_score,
+                    -attempt.cluster_count,
+                    attempt.profile_name,
+                ),
+            )
+            if fallback_attempts
+            else ClusteringAttempt(
+                profile_name="agglomerative_fallback",
+                backend="agglomerative",
+                quality_score=fallback_quality,
+                cluster_count=_cluster_count(fallback_labels),
+                noise_fraction=_noise_fraction(fallback_labels),
+                accepted=False,
+            )
+        )
+        best_profile = fallback_best_attempt.profile_name
+
+    selected_cluster_count = _cluster_count(best_labels)
+    clustering_meta = {
+        **embedding_meta,
+        "clustering_backend_effective": best_backend,
+        "clustering_selected_profile": best_profile,
+        "clustering_reflection_triggered": len(attempts) > 1,
+        "clustering_reflection_attempt_count": len(attempts),
+        "clustering_quality_gate_threshold": settings.clustering_reflection_threshold,
+        "clustering_quality_gate_passed": best_quality
+        >= settings.clustering_reflection_threshold,
+        "clustering_cluster_count_gate_passed": selected_cluster_count
+        <= settings.clustering_max_cluster_count,
+        "clustering_attempts": [
+            {
+                "profile_name": attempt.profile_name,
+                "backend": attempt.backend,
+                "quality_score": round(attempt.quality_score, 4),
+                "cluster_count": attempt.cluster_count,
+                "noise_fraction": round(attempt.noise_fraction, 4),
+                "accepted": attempt.accepted,
+            }
+            for attempt in attempts
+        ],
+    }
+    return best_labels, best_quality, clustering_meta
+
+
+def _run_hdbscan_reflection(
+    embeddings: np.ndarray, settings: Settings
+) -> tuple[np.ndarray, float, list[ClusteringAttempt]]:
+    """Run bounded HDBSCAN retries across multiple profiles."""
+
+    n_samples = len(embeddings)
+    base_min_cluster_size = min(
+        settings.clustering_min_cluster_size, max(2, n_samples // 4 or 2)
+    )
+    base_min_samples = min(settings.clustering_min_samples, max(1, n_samples // 6 or 1))
+    candidate_profiles = [
+        ("hdbscan_default", base_min_cluster_size, base_min_samples),
+        (
+            "hdbscan_smaller_clusters",
+            max(2, base_min_cluster_size - 1),
+            max(1, base_min_samples),
+        ),
+        (
+            "hdbscan_more_stable",
+            min(max(2, n_samples - 1), base_min_cluster_size + 1),
+            min(max(1, n_samples - 2), base_min_samples + 1),
+        ),
+    ]
+    attempts: list[ClusteringAttempt] = []
+    best_labels = np.zeros(n_samples, dtype=int)
+    best_quality = 0.0
+
+    for profile_name, min_cluster_size, min_samples in candidate_profiles[
+        : max(1, settings.clustering_reflection_max_profiles)
+    ]:
+        clusterer = hdbscan.HDBSCAN(
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples,
+            metric="euclidean",
+        )
+        labels = clusterer.fit_predict(embeddings)
+        quality = _quality_score(embeddings, labels)
+        cluster_count = _cluster_count(labels)
+        noise_fraction = _noise_fraction(labels)
+        accepted = bool(
+            quality >= settings.clustering_reflection_threshold
+            and cluster_count <= settings.clustering_max_cluster_count
+        )
+        attempts.append(
+            ClusteringAttempt(
+                profile_name=profile_name,
+                backend="hdbscan",
+                quality_score=quality,
+                cluster_count=cluster_count,
+                noise_fraction=noise_fraction,
+                accepted=accepted,
+            )
+        )
+        if quality > best_quality:
+            best_quality = quality
+            best_labels = labels
+        if accepted:
+            break
+    return best_labels, best_quality, attempts
+
+
+def _build_clustering_embeddings(
+    texts: list[str], settings: Settings
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Build dense embeddings for clustering with external-provider fallback."""
+
+    if not texts:
+        return np.zeros((0, 1), dtype=np.float32), {
+            "embedding_backend_effective": "projection",
+            "embedding_model_effective": "tfidf-svd-projection",
+            "embedding_degraded_reason": "no_texts",
+        }
+
+    try:
+        embedding_result = embed_texts(
+            texts,
+            settings,
+            batch_size=settings.embedding_batch_size,
+        )
+        return embedding_result.vectors, {
+            "embedding_backend_effective": embedding_result.backend_effective,
+            "embedding_model_effective": embedding_result.model_effective,
+            "embedding_degraded_reason": embedding_result.degraded_reason,
+        }
+    except PFIAError as exc:
+        projection = _build_projection_embeddings(texts)
+        return projection, {
+            "embedding_backend_effective": "projection",
+            "embedding_model_effective": "tfidf-svd-projection",
+            "embedding_degraded_reason": exc.code.lower(),
+        }
+
+
+def _build_projection_embeddings(texts: list[str]) -> np.ndarray:
+    """Build deterministic TF-IDF + SVD projection embeddings."""
+
     word_vectorizer = TfidfVectorizer(
         lowercase=True,
         analyzer="word",
@@ -344,35 +527,20 @@ def _cluster_texts(texts: list[str], settings: Settings) -> tuple[np.ndarray, fl
     combined = hstack([word_matrix, char_matrix])
 
     n_samples, n_features = combined.shape
+    if n_samples == 0 or n_features == 0:
+        return np.zeros((n_samples, 1), dtype=np.float32)
     if n_samples < 3 or n_features < 3:
-        return np.zeros(n_samples, dtype=int), 0.0
+        dense = combined.toarray()
+        if dense.size:
+            dense = Normalizer(copy=False).fit_transform(dense)
+        return np.asarray(dense, dtype=np.float32)
 
     n_components = max(2, min(64, n_samples - 1, n_features - 1))
     reduced = TruncatedSVD(n_components=n_components, random_state=42).fit_transform(
         combined
     )
     embeddings = Normalizer(copy=False).fit_transform(reduced)
-
-    if hdbscan is not None:
-        clusterer = hdbscan.HDBSCAN(
-            min_cluster_size=min(
-                settings.clustering_min_cluster_size, max(2, n_samples // 4 or 2)
-            ),
-            min_samples=min(
-                settings.clustering_min_samples, max(1, n_samples // 6 or 1)
-            ),
-            metric="euclidean",
-        )
-        labels = clusterer.fit_predict(embeddings)
-        quality = _quality_score(embeddings, labels)
-    else:
-        labels = np.zeros(n_samples, dtype=int)
-        quality = 0.0
-
-    fallback_labels, fallback_quality = _agglomerative_profile(embeddings)
-    if fallback_quality > quality:
-        return fallback_labels, fallback_quality
-    return labels, quality
+    return np.asarray(embeddings, dtype=np.float32)
 
 
 def _group_labels(
@@ -730,18 +898,21 @@ def _quality_score(embeddings: np.ndarray, labels: np.ndarray) -> float:
         return 0.0
 
 
-def _agglomerative_profile(embeddings: np.ndarray) -> tuple[np.ndarray, float]:
+def _agglomerative_profile(
+    embeddings: np.ndarray,
+) -> tuple[np.ndarray, float, list[ClusteringAttempt]]:
     """Evaluate an agglomerative fallback clustering profile.
 
     Args:
         embeddings: Reduced embedding vectors.
 
     Returns:
-        Tuple of ``(best_labels, best_quality_score)``.
+        Tuple of ``(best_labels, best_quality_score, attempts)``.
     """
     n_samples = len(embeddings)
     best_quality = 0.0
     best_labels = np.zeros(n_samples, dtype=int)
+    attempts: list[ClusteringAttempt] = []
     max_clusters = min(8, max(2, n_samples // 3))
     for n_clusters in range(3, max_clusters + 1):
         model = AgglomerativeClustering(
@@ -749,10 +920,35 @@ def _agglomerative_profile(embeddings: np.ndarray) -> tuple[np.ndarray, float]:
         )
         labels = model.fit_predict(embeddings)
         quality = _quality_score(embeddings, labels)
+        cluster_count = _cluster_count(labels)
+        attempts.append(
+            ClusteringAttempt(
+                profile_name=f"agglomerative_{n_clusters}",
+                backend="agglomerative",
+                quality_score=quality,
+                cluster_count=cluster_count,
+                noise_fraction=_noise_fraction(labels),
+                accepted=False,
+            )
+        )
         if quality > best_quality:
             best_quality = quality
             best_labels = labels
-    return best_labels, best_quality
+    return best_labels, best_quality, attempts
+
+
+def _cluster_count(labels: np.ndarray) -> int:
+    """Return the number of non-noise clusters in a label array."""
+
+    return len({int(label) for label in labels if int(label) != -1})
+
+
+def _noise_fraction(labels: np.ndarray) -> float:
+    """Return the share of labels assigned to the noise bucket."""
+
+    if len(labels) == 0:
+        return 0.0
+    return float(sum(1 for label in labels if int(label) == -1) / len(labels))
 
 
 def detect_concepts(text: str) -> list[str]:

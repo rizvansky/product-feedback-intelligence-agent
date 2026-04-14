@@ -108,24 +108,40 @@ class Repository:
         self,
         job_id: str,
         session_id: str,
-        stage: JobStage,
+        stage: JobStage | str,
         event: str,
         level: str,
         message: str,
+        *,
+        correlation_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Append a stage event to the audit log."""
+        resolved_correlation_id = correlation_id
+        if resolved_correlation_id is None:
+            try:  # lazy import to avoid a module cycle at import time
+                from pfia.observability import get_current_observer
+
+                observer = get_current_observer()
+                resolved_correlation_id = getattr(observer, "correlation_id", None)
+            except Exception:
+                resolved_correlation_id = None
         self.db.execute(
             """
-            INSERT INTO job_events (job_id, session_id, stage, event, level, message, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO job_events (
+                job_id, session_id, stage, event, level, message, correlation_id, metadata_json, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 job_id,
                 session_id,
-                stage.value,
+                stage.value if isinstance(stage, JobStage) else stage,
                 event,
                 level,
                 message,
+                resolved_correlation_id or job_id,
+                _json_dumps(metadata or {}),
                 utcnow().isoformat(),
             ),
         )
@@ -526,7 +542,23 @@ class Repository:
         )
         if row is None:
             return None
-        return SessionRuntimeMetadata.model_validate_json(row["payload_json"])
+        payload = _json_loads(row["payload_json"], {})
+        payload.setdefault("trace_correlation_id", "n/a")
+        payload.setdefault("trace_exporters_effective", [])
+        payload.setdefault("trace_local_path", None)
+        payload.setdefault("pii_backend_requested", "regex")
+        payload.setdefault("pii_backend_effective", "regex")
+        payload.setdefault("sentiment_backend_requested", "lexical")
+        payload.setdefault("sentiment_backend_effective", "lexical")
+        payload.setdefault("sentiment_model_effective", None)
+        payload.setdefault("llm_call_count", 0)
+        payload.setdefault("embedding_call_count", 0)
+        payload.setdefault("prompt_tokens_total", 0)
+        payload.setdefault("completion_tokens_total", 0)
+        payload.setdefault("embedding_input_tokens_total", 0)
+        payload.setdefault("estimated_cost_usd", 0.0)
+        payload.setdefault("provider_usage_summary", {})
+        return SessionRuntimeMetadata.model_validate(payload)
 
     def get_quotes_for_cluster(
         self, session_id: str, cluster_id: str, limit: int = 3
@@ -687,7 +719,7 @@ class Repository:
         """Return ordered stage events for a session."""
         rows = self.db.fetchall(
             """
-            SELECT stage, event, level, message, created_at
+            SELECT stage, event, level, message, correlation_id, metadata_json, created_at
             FROM job_events
             WHERE session_id = ?
             ORDER BY id ASC
@@ -700,6 +732,8 @@ class Repository:
                 "event": row["event"],
                 "level": row["level"],
                 "message": row["message"],
+                "correlation_id": row["correlation_id"],
+                "metadata": _json_loads(row["metadata_json"], {}),
                 "created_at": row["created_at"],
             }
             for row in rows

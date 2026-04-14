@@ -17,7 +17,7 @@
 - FastAPI API + встроенный статический UI;
 - embedded background worker в том же процессе;
 - persistent Railway volume;
-- SQLite + on-disk retrieval index.
+- SQLite + persistent Chroma retrieval + session fallback index.
 
 ## Quick Check
 
@@ -47,7 +47,9 @@
 Дополнительно после завершения batch-run в UI и `GET /api/sessions/{session_id}` видны:
 
 - `runtime_profile`
+- effective orchestrator backend
 - effective generation backend
+- effective retrieval backend
 - input filename
 - per-agent usage snapshot
 

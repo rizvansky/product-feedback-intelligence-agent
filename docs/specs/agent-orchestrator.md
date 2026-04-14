@@ -8,7 +8,7 @@
 
 - Один worker обрабатывает один batch-job за раз.
 - Источник истины по состоянию: SQLite.
-- Orchestrator может быть реализован поверх LangGraph, но persisted state и переходы задаются отдельной state machine, а не только runtime-графом.
+- Текущий runtime использует LangGraph поверх сервисных stage-функций, но persisted state и переходы всё равно задаются отдельной SQLite-backed state machine, а не только runtime-графом.
 
 ## Статусы job
 

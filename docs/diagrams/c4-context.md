@@ -13,13 +13,15 @@ flowchart LR
     end
 
     openai["OpenAI API<br/>Embeddings + Generation"]
-    anthropic["Anthropic API<br/>Generation fallback"]
+    mistral["Mistral API<br/>Generation fallback"]
+    anthropic["Anthropic API<br/>Generation fallback 2"]
     obs["LangSmith / OTLP sink<br/>Observability backend"]
 
     user -->|upload / status / Q&A| ui
     exports -->|file upload| ui
     ui --> core
     core -->|primary calls| openai
-    core -->|fallback generation| anthropic
+    core -->|fallback generation| mistral
+    core -->|fallback generation 2| anthropic
     core -->|traces / telemetry| obs
 ```

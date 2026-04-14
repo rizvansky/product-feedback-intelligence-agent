@@ -1,8 +1,11 @@
 FROM python:3.10-slim
 
+ARG PFIA_INSTALL_SPACY_MODELS=true
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PFIA_INSTALL_SPACY_MODELS=${PFIA_INSTALL_SPACY_MODELS}
 
 WORKDIR /app
 
@@ -10,7 +13,11 @@ COPY pyproject.toml README.md /app/
 COPY src /app/src
 COPY data/demo /app/data/demo
 
-RUN pip install .
+RUN pip install . && \
+    if [ "$PFIA_INSTALL_SPACY_MODELS" = "true" ]; then \
+      python -m spacy download en_core_web_sm && \
+      python -m spacy download ru_core_news_sm; \
+    fi
 
 EXPOSE 8000
 

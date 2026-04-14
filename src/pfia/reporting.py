@@ -122,6 +122,9 @@ def build_report_markdown(
             "## Run Diagnostics",
             "",
             f"- Clustering quality score: {diagnostics.get('quality_score', 0):.3f}",
+            f"- Clustering backend: {diagnostics.get('clustering_backend_effective', 'n/a')}",
+            f"- Selected clustering profile: {diagnostics.get('clustering_selected_profile', 'n/a')}",
+            f"- Reflection attempts: {diagnostics.get('clustering_reflection_attempt_count', 0)}",
             f"- Total clusters included in report: {diagnostics.get('total_clusters', 0)}",
             f"- Degraded reason: {diagnostics.get('degraded_reason') or 'n/a'}",
             "",
@@ -206,19 +209,56 @@ def _render_runtime_metadata(runtime_metadata: SessionRuntimeMetadata) -> list[s
         "## Runtime Metadata",
         "",
         f"- Runtime profile: `{runtime_metadata.runtime_profile}`",
+        f"- Trace correlation id: `{runtime_metadata.trace_correlation_id}`",
+        f"- Trace exporters effective: {', '.join(f'`{item}`' for item in runtime_metadata.trace_exporters_effective) or 'n/a'}",
+        f"- Local trace path: `{runtime_metadata.trace_local_path or 'n/a'}`",
+        f"- Requested orchestrator backend: `{runtime_metadata.orchestrator_backend_requested}`",
+        f"- Effective orchestrator backend: `{runtime_metadata.orchestrator_backend_effective}`",
         f"- Requested generation backend: `{runtime_metadata.generation_backend_requested}`",
         f"- Effective generation backend: `{runtime_metadata.generation_backend_effective}`",
+        f"- Requested retrieval backend: `{runtime_metadata.retrieval_backend_requested}`",
+        f"- Effective retrieval backend: `{runtime_metadata.retrieval_backend_effective}`",
+        f"- Requested PII backend: `{runtime_metadata.pii_backend_requested}`",
+        f"- Effective PII backend: `{runtime_metadata.pii_backend_effective}`",
+        f"- Requested sentiment backend: `{runtime_metadata.sentiment_backend_requested}`",
+        f"- Effective sentiment backend: `{runtime_metadata.sentiment_backend_effective}`",
+        f"- Effective sentiment model: `{runtime_metadata.sentiment_model_effective or 'n/a'}`",
         f"- Embedding backend: `{runtime_metadata.embedding_backend}`",
+        f"- Requested embedding backend: `{runtime_metadata.embedding_backend_requested or runtime_metadata.embedding_backend}`",
+        f"- Effective embedding backend: `{runtime_metadata.embedding_backend_effective or runtime_metadata.embedding_backend}`",
+        f"- Effective embedding model: `{runtime_metadata.embedding_model_effective or 'n/a'}`",
         f"- OpenAI generation enabled: {'yes' if runtime_metadata.openai_generation_enabled else 'no'}",
+        f"- Mistral fallback enabled: {'yes' if runtime_metadata.mistral_fallback_enabled else 'no'}",
+        f"- Anthropic fallback enabled: {'yes' if runtime_metadata.anthropic_fallback_enabled else 'no'}",
         f"- Primary LLM model: `{runtime_metadata.llm_primary_model or 'n/a'}`",
+        f"- LLM call count: `{runtime_metadata.llm_call_count}`",
+        f"- Embedding call count: `{runtime_metadata.embedding_call_count}`",
+        f"- Prompt tokens total: `{runtime_metadata.prompt_tokens_total}`",
+        f"- Completion tokens total: `{runtime_metadata.completion_tokens_total}`",
+        f"- Embedding input tokens total: `{runtime_metadata.embedding_input_tokens_total}`",
+        f"- Estimated session cost USD: `{runtime_metadata.estimated_cost_usd:.6f}`",
         f"- Input filename: `{runtime_metadata.input_filename or 'n/a'}`",
         f"- Input content type: `{runtime_metadata.input_content_type or 'n/a'}`",
         f"- Records kept: `{runtime_metadata.records_kept}` of `{runtime_metadata.records_total}`",
         f"- Top cluster ids: {', '.join(f'`{cluster_id}`' for cluster_id in runtime_metadata.top_cluster_ids) or 'n/a'}",
         f"- Data dir: `{runtime_metadata.data_dir}`",
+        f"- Chroma dir: `{runtime_metadata.chroma_persist_dir or 'n/a'}`",
         f"- Embedded worker: {'yes' if runtime_metadata.embedded_worker else 'no'}",
-        "- Agent usage:",
+        "- Provider usage summary:",
     ]
+    for provider, meta in runtime_metadata.provider_usage_summary.items():
+        lines.append(
+            "  - "
+            f"`{provider}` -> llm_calls={meta.get('llm_calls', 0)}, "
+            f"embedding_calls={meta.get('embedding_calls', 0)}, "
+            f"models={', '.join(meta.get('models', [])) or 'n/a'}, "
+            f"last_status={meta.get('last_status', 'unknown')}"
+        )
+    lines.extend(
+        [
+            "- Agent usage:",
+        ]
+    )
     for agent_name, meta in runtime_metadata.agent_usage.items():
         mode = str(meta.get("mode", "unknown"))
         used = "yes" if meta.get("used") else "no"
