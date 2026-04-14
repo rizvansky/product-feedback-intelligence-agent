@@ -6,24 +6,27 @@ PFIA - это PoC-система для пакетного анализа пол
 
 ## Live Demo
 
-Текущий публичный деплой, проверенный 13 апреля 2026 года:
+Текущий публичный деплой, проверенный 14 апреля 2026 года:
 
-- Demo URL: `https://product-feedback-intelligence-agent-production.up.railway.app`
+- Main UI URL: `https://frontend-production-c4b0.up.railway.app`
+- API URL: `https://api-production-242f.up.railway.app`
+- Chroma diagnostics URL: `https://chroma-production-4408.up.railway.app/api/v2/heartbeat`
 - GitHub repository: `https://github.com/rizvansky/product-feedback-intelligence-agent`
 
 Быстрая проверка hosted PoC занимает 1-2 минуты:
 
-1. Открыть demo URL.
+1. Открыть main UI URL.
 1. Нажать `Run Demo Dataset`.
 1. Дождаться статуса `COMPLETED`.
-1. Убедиться, что в UI появились clusters, Markdown report и timeline events.
+1. Убедиться, что в UI появились clusters, Markdown report, timeline events и runtime metadata.
 1. В Q&A задать: `What is the highest-priority issue and what evidence supports it?`
 
 Ожидаемый результат:
 
 - top issue: `Payment flow crashes`
-- количество кластеров на demo batch: `8`
-- health endpoints доступны:
+- количество top clusters в presentation mode: `5`
+- weak signals отображаются отдельно
+- health endpoints доступны на API URL:
   - `/health/live`
   - `/health/ready`
   - `/metrics`
@@ -79,14 +82,14 @@ PFIA - это PoC-система для пакетного анализа пол
 - Health endpoints, Prometheus-compatible `/metrics`, Docker Compose, demo dataset и тесты.
 - Hosted deploy profile под Railway:
   - canonical full profile: `frontend + api + chroma`;
-  - operational fallback profile: `api` only c embedded worker и built-in UI.
+  - operational fallback profile: `api` only с embedded worker и built-in UI.
 
 ## Реальный Stack В Репозитории
 
 Репозиторий поддерживает два рабочих deployment/runtime профиля:
 
 - `compose / multi-service`: отдельные `frontend`, `api`, `worker`, `chroma`.
-- `railway / full profile`: отдельные `frontend`, `api`, `chroma`, где worker живёт embedded inside `api`.
+- `railway / full profile`: отдельные `frontend`, `api`, `chroma`, где worker встроен в `api`.
 - `hosted / fallback profile`: только `api` + embedded worker + persistent volume.
 
 Состав сервисов и модульные границы при этом остаются одинаковыми:
@@ -108,7 +111,7 @@ PFIA - это PoC-система для пакетного анализа пол
 - `api`: FastAPI + embedded worker + volume `/data`;
 - `chroma`: отдельный Chroma HTTP-service + volume `/data`.
 
-Fallback single-service профиль доступен, но его стоит рассматривать как simplified operational mode, а не как основной proposal-aligned deploy.
+Fallback single-service профиль доступен, но его стоит рассматривать как упрощённый operational mode, а не как основной proposal-aligned deploy.
 
 ## Быстрый Старт
 
@@ -498,11 +501,19 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 - `docker compose up -d`
 - e2e upload -> process -> chat через живой Docker API
 - hosted Railway deployment:
-  - public URL отвечает;
+  - `frontend` public URL отвечает;
+  - `api` public URL отвечает;
+  - `chroma` heartbeat отвечает;
   - `/health/live` возвращает `{"status":"ok"}`;
   - `/health/ready` возвращает `ready=true`, `worker.mode=embedded`, `storage.data_dir=/data/runtime`;
   - demo batch успешно доходит до `COMPLETED`;
-  - hosted Q&A возвращает grounded answer по `payment_flow_crashes_1`
+  - `runtime_profile=llm-enhanced`;
+  - `orchestrator_backend_effective=langgraph`;
+  - `generation_backend_effective=openai`;
+  - `embedding_backend_effective=openai`;
+  - `retrieval_backend_effective=chroma`;
+  - `chroma_mode_effective=http`;
+  - hosted Q&A возвращает grounded answer по `payment_flow_crashes_1` без `degraded_mode`
 
 ## Качество И Безопасность
 
@@ -579,6 +590,18 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 1. Сгенерировать public domain для `frontend`.
 
 Подробный runbook лежит в [docs/deploy/railway.md](docs/deploy/railway.md).
+
+Для текущего live deployment user-facing URL такой:
+
+- `frontend`: `https://frontend-production-c4b0.up.railway.app`
+
+Технические smoke/health checks удобнее делать через:
+
+- `api`: `https://api-production-242f.up.railway.app`
+
+Технический heartbeat для Chroma:
+
+- `chroma`: `https://chroma-production-4408.up.railway.app/api/v2/heartbeat`
 
 ## Документация
 
