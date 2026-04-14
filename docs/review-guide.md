@@ -5,9 +5,11 @@
 ## Links
 
 - Repository: `https://github.com/rizvansky/product-feedback-intelligence-agent`
-- Live demo: `https://product-feedback-intelligence-agent-production.up.railway.app`
+- Main UI: `https://frontend-production-c4b0.up.railway.app`
+- API: `https://api-production-242f.up.railway.app`
+- Chroma heartbeat: `https://chroma-production-4408.up.railway.app/api/v2/heartbeat`
 
-Публичный деплой проверен 13 апреля 2026 года.
+Публичный деплой проверен 14 апреля 2026 года.
 
 ## What Is Deployed
 
@@ -25,6 +27,7 @@
 Проверка должна занимать 1-2 минуты:
 
 1. Открыть live demo URL.
+   Main UI URL: `https://frontend-production-c4b0.up.railway.app`
 1. Нажать `Run Demo Dataset`.
 1. Дождаться статуса `COMPLETED`.
 1. Убедиться, что в UI отобразились:
@@ -63,9 +66,10 @@
 
 Для технической проверки доступны:
 
-- `/health/live`
-- `/health/ready`
-- `/metrics`
+- `https://api-production-242f.up.railway.app/health/live`
+- `https://api-production-242f.up.railway.app/health/ready`
+- `https://api-production-242f.up.railway.app/metrics`
+- `https://chroma-production-4408.up.railway.app/api/v2/heartbeat`
 
 Ожидаемое состояние hosted deploy:
 
@@ -111,10 +115,11 @@ python check.py --file path/to/your_reviews.csv --question "Which topic is spiki
 
 ```text
 Repository: https://github.com/rizvansky/product-feedback-intelligence-agent
-Live demo: https://product-feedback-intelligence-agent-production.up.railway.app
+Main UI: https://frontend-production-c4b0.up.railway.app
+API: https://api-production-242f.up.railway.app
 
 Что можно проверить:
-1. Открыть live demo.
+1. Открыть main UI.
 2. Нажать Run Demo Dataset.
 3. Дождаться статуса COMPLETED.
 4. Посмотреть clusters, Markdown report и timeline.

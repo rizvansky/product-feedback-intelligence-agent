@@ -9,6 +9,21 @@
 
 В конце отдельно описан упрощённый fallback-профиль `api-only`.
 
+## Current Verified Deployment
+
+Публичные URL текущего проверенного hosted-профиля:
+
+- `frontend`: `https://frontend-production-c4b0.up.railway.app`
+- `api`: `https://api-production-242f.up.railway.app`
+- `chroma` heartbeat: `https://chroma-production-4408.up.railway.app/api/v2/heartbeat`
+
+В текущем production deployment:
+
+- user-facing traffic идёт через `frontend`;
+- smoke и health checks удобнее гонять через `api`;
+- Chroma подключён в `api` как HTTP backend;
+- текущий рабочий endpoint Chroma в runtime metadata выглядит как `https://chroma-production-4408.up.railway.app:443`.
+
 ## 1. Что именно деплоим
 
 ### 1.1 `api`
@@ -143,6 +158,17 @@ MISTRAL_API_KEY=<your_mistral_key>
 ANTHROPIC_API_KEY=<your_anthropic_key>
 ```
 
+Для current verified deployment также валиден рабочий набор Chroma-переменных через public TLS endpoint:
+
+```text
+PFIA_CHROMA_MODE=http
+PFIA_CHROMA_HOST=chroma-production-4408.up.railway.app
+PFIA_CHROMA_PORT=443
+PFIA_CHROMA_SSL=true
+```
+
+Если private networking в твоём проекте работает стабильно, вместо этого можно использовать private hostname `chroma.railway.internal` и внутренний порт `8000`.
+
 Опционально:
 
 ```text
@@ -208,6 +234,12 @@ IS_PERSISTENT=TRUE
 - в `api`:
   - `PFIA_CHROMA_HOST=<chroma-private-host>`
   - `PFIA_CHROMA_PORT=8000`
+
+Для текущего live deployment user-facing/public path используется так:
+
+- `frontend` browser traffic: public `frontend` domain;
+- `frontend -> api`: internal rewrite target;
+- `api -> chroma`: public TLS Chroma endpoint.
 
 ## 6. Public Networking
 
@@ -293,6 +325,12 @@ IS_PERSISTENT=TRUE
 - `/health/ready` -> `200`
 - `worker.mode=embedded`
 - `storage.data_dir=/data/runtime`
+- текущий smoke-run через `check.py` должен показывать:
+  - `orchestrator_backend_effective=langgraph`
+  - `generation_backend_effective=openai`
+  - `embedding_backend_effective=openai`
+  - `retrieval_backend_effective=chroma`
+  - `chroma_mode_effective=http`
 
 ### 9.3 `frontend`
 
@@ -326,7 +364,7 @@ IS_PERSISTENT=TRUE
 После deploy:
 
 ```bash
-python check.py --base-url https://<your-api-public-url>
+python check.py --base-url https://api-production-242f.up.railway.app
 ```
 
 Если публичного URL у `api` нет, проверяй через `frontend` UI и сравни:

@@ -37,6 +37,13 @@ Hosted deploy profile для Railway имеет два варианта:
 
 Production `api` image по умолчанию устанавливает `en_core_web_sm` и `ru_core_news_sm`, но **не** ставит local `sentence-transformers` fallback, чтобы Railway build не раздувался из-за `torch`/CUDA stack.
 
+Текущий проверенный hosted deployment использует:
+
+- `frontend` как основной user-facing URL;
+- `api` как отдельный smoke/health endpoint;
+- `chroma` как отдельный HTTP backend для retrieval;
+- `PFIA_CHROMA_MODE=http` и рабочий `chroma_endpoint_effective` в runtime metadata.
+
 ## Обязательные конфиги
 
 | Переменная | Назначение |
@@ -195,3 +202,16 @@ Production `api` image по умолчанию устанавливает `en_co
 | `PFIA_INTERNAL_API_BASE_URL` | internal rewrite target для Next.js server; локально `http://127.0.0.1:8000`, в compose `http://api:8000` |
 
 Такой proxy-контур позволяет держать browser traffic same-origin и не включать CORS в FastAPI только ради frontend-сервиса.
+
+Для `PFIA_CHROMA_*` в hosted Railway deployment допустимы два рабочих варианта:
+
+- private networking:
+  - `PFIA_CHROMA_HOST=chroma.railway.internal`
+  - `PFIA_CHROMA_PORT=8000`
+  - `PFIA_CHROMA_SSL=false`
+- public TLS endpoint:
+  - `PFIA_CHROMA_HOST=chroma-production-4408.up.railway.app`
+  - `PFIA_CHROMA_PORT=443`
+  - `PFIA_CHROMA_SSL=true`
+
+Текущий публично проверенный deployment использует второй вариант.

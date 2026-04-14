@@ -223,11 +223,30 @@ curl -s http://127.0.0.1:8000/api/sessions/<session_id>/chat \
 
 После деплоя:
 
-- открыть `/health/live`;
-- открыть `/health/ready`;
-- открыть UI;
+- открыть `https://api-production-242f.up.railway.app/health/live`;
+- открыть `https://api-production-242f.up.railway.app/health/ready`;
+- открыть `https://api-production-242f.up.railway.app/metrics`;
+- открыть `https://chroma-production-4408.up.railway.app/api/v2/heartbeat`;
+- открыть UI `https://frontend-production-c4b0.up.railway.app`;
 - выполнить `Run Demo Dataset`;
 - выполнить хотя бы один произвольный upload своего CSV/JSON;
 - сверить `runtime_metadata` и содержимое отчёта.
 
 Если на Railway включены `OpenAI`, `Mistral` и/или `Anthropic`, для demo dataset и произвольного файла `runtime_profile` должен становиться `llm-enhanced`, а не оставаться deterministic-only.
+
+Практически полезный API smoke для текущего публичного `api`:
+
+```bash
+python check.py --base-url https://api-production-242f.up.railway.app
+```
+
+Для текущего проверенного hosted run ожидается:
+
+- `RUNTIME_PROFILE: llm-enhanced`
+- `ORCHESTRATOR_BACKEND: langgraph`
+- `GENERATION_BACKEND: openai`
+- `EMBEDDING_BACKEND: openai`
+- `RETRIEVAL_BACKEND: chroma`
+- `CHROMA_MODE: http`
+- `PII_BACKEND: regex+spacy`
+- `degraded_mode: false` в chat response
