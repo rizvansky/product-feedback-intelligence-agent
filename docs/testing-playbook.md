@@ -35,7 +35,7 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 - session runtime metadata.
 - отдельный `Next.js` frontend как production build.
 
-Дополнительно acceptance/runtime теперь явно проверяются по proposal-aligned user-facing signals:
+Дополнительно acceptance/runtime явно проверяются по proposal-aligned user-facing signals:
 
 - `presentation_mode`;
 - `low_data_mode`;
@@ -113,7 +113,7 @@ python check.py
 
 ## 4. Fallback smoke
 
-Чтобы проверить graceful fallback:
+Для проверки graceful fallback:
 
 1. оставить `PFIA_GENERATION_BACKEND=openai`;
 1. подставить валидные `MISTRAL_API_KEY` и `ANTHROPIC_API_KEY`;
@@ -127,7 +127,7 @@ python check.py
 - batch всё ещё завершается;
 - `runtime_profile=llm-enhanced`;
 - `generation_backend_effective=mistral` или `anthropic`;
-- `orchestrator_backend_effective` остаётся `langgraph` или уходит в `linear`, если ты специально тестируешь fallback orchestration;
+- `orchestrator_backend_effective` остаётся `langgraph` или уходит в `linear` при отдельной проверке fallback orchestration;
 - chat отвечает без ухода в local fallback.
 
 Если очистить `OPENAI_API_KEY`, `MISTRAL_API_KEY` и `ANTHROPIC_API_KEY`, тогда ожидаемо:
@@ -154,7 +154,7 @@ python check.py \
 
 Что смотреть после такого прогона:
 
-- `INPUT_FILENAME` должен совпадать с твоим файлом;
+- `INPUT_FILENAME` должен совпадать с загруженным файлом;
 - `TOP_CLUSTER_IDS` должны отличаться, если меняется сам датасет;
 - `PRESENTATION_MODE` должен становиться `simple_list`, если загрузить меньше 30 отзывов;
 - `WEAK_SIGNAL_CLUSTER_IDS` должны появляться при batch'ах с малыми темами по 2-3 отзыва;
@@ -234,7 +234,7 @@ curl -s http://127.0.0.1:8000/api/sessions/<session_id>/chat \
 
 Если на Railway включены `OpenAI`, `Mistral` и/или `Anthropic`, для demo dataset и произвольного файла `runtime_profile` должен становиться `llm-enhanced`, а не оставаться deterministic-only.
 
-Практически полезный API smoke для текущего публичного `api`:
+Базовый API smoke для текущего публичного `api`:
 
 ```bash
 python check.py --base-url https://api-production-242f.up.railway.app

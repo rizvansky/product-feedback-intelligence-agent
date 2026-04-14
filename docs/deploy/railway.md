@@ -60,7 +60,7 @@
 
 ## 2. Railway Project Layout
 
-В одном Railway project создай **3 services**:
+В одном Railway project используются **3 services**:
 
 1. `api`
 1. `frontend`
@@ -77,7 +77,7 @@
 
 ### 3.1 `api` service
 
-Создай service из repository root.
+`api` service собирается из repository root.
 
 Ожидаемый config:
 
@@ -93,7 +93,7 @@
 
 ### 3.2 `frontend` service
 
-Создай service из поддиректории `frontend/`.
+`frontend` service собирается из поддиректории `frontend/`.
 
 Ожидаемый config:
 
@@ -103,7 +103,7 @@
 
 ### 3.3 `chroma` service
 
-Создай service из поддиректории `chroma/`.
+`chroma` service собирается из поддиректории `chroma/`.
 
 Ожидаемый config:
 
@@ -158,7 +158,7 @@ MISTRAL_API_KEY=<your_mistral_key>
 ANTHROPIC_API_KEY=<your_anthropic_key>
 ```
 
-Для current verified deployment также валиден рабочий набор Chroma-переменных через public TLS endpoint:
+Для current verified deployment также используется рабочий набор Chroma-переменных через public TLS endpoint:
 
 ```text
 PFIA_CHROMA_MODE=http
@@ -167,7 +167,7 @@ PFIA_CHROMA_PORT=443
 PFIA_CHROMA_SSL=true
 ```
 
-Если private networking в твоём проекте работает стабильно, вместо этого можно использовать private hostname `chroma.railway.internal` и внутренний порт `8000`.
+При стабильном private networking вместо этого используется private hostname `chroma.railway.internal` и внутренний порт `8000`.
 
 Опционально:
 
@@ -223,11 +223,11 @@ IS_PERSISTENT=TRUE
 1. `frontend -> api`
 1. `api -> chroma`
 
-Не подставляй публичные домены там, где должен идти internal traffic.
+Публичные домены не используются там, где должен идти internal traffic.
 
-Используй private hostnames / service-internal addresses Railway.
+Для internal traffic используются private hostnames / service-internal addresses Railway.
 
-Практически:
+Рабочая схема адресации:
 
 - в `frontend`:
   - `PFIA_INTERNAL_API_BASE_URL=http://<api-private-host>:8080`
@@ -245,7 +245,7 @@ IS_PERSISTENT=TRUE
 
 Публичный домен нужен только для `frontend`.
 
-Дополнительно публичный домен для `api` можно выдать, если хочешь отдельно проверять:
+Дополнительно публичный домен для `api` можно выдать, если требуется отдельно проверять:
 
 - `/health/live`
 - `/health/ready`
@@ -292,11 +292,11 @@ IS_PERSISTENT=TRUE
 
 Только если:
 
-- тебе действительно нужен `sentence-transformers` fallback inside hosted image;
-- твой Railway plan выдерживает более тяжёлый image;
-- ты осознанно идёшь на более медленный build.
+- действительно требуется `sentence-transformers` fallback inside hosted image;
+- Railway plan выдерживает более тяжёлый image;
+- допустим более медленный build.
 
-Для стандартного Railway deploy этого делать **не надо**.
+Для стандартного Railway deploy это не требуется.
 
 ## 9. Verification Checklist
 
@@ -334,7 +334,7 @@ IS_PERSISTENT=TRUE
 
 ### 9.3 `frontend`
 
-Открыть public domain `frontend` service и проверить:
+Проверка `frontend` service через public domain:
 
 1. `Run Demo Dataset`
 1. статус `COMPLETED`
@@ -373,7 +373,7 @@ python check.py --base-url https://api-production-242f.up.railway.app
 - runtime metadata
 - Q&A answer
 
-Дополнительно загрузить свой CSV/JSON и убедиться, что:
+Дополнительно загрузить произвольный CSV/JSON и убедиться, что:
 
 - `runtime_metadata.input_filename` меняется;
 - `top_cluster_ids` меняются;
@@ -430,11 +430,11 @@ python check.py --base-url https://api-production-242f.up.railway.app
 
 ## 13. Optional Fallback Profile
 
-Если нужно поднять проект максимально быстро и дёшево, всё ещё можно использовать:
+Для быстрого и упрощённого развертывания остаётся доступен следующий профиль:
 
 - только `api` service
 - встроенный FastAPI UI
 - embedded worker
 - embedded Chroma/persisted index
 
-Но это не основной proposal-aligned deploy. Для полного hosted профиля ориентируйся на `frontend + api + chroma`.
+Этот профиль не считается основным proposal-aligned deploy. Полный hosted профиль задаётся схемой `frontend + api + chroma`.

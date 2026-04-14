@@ -93,9 +93,9 @@
 
 ## Arbitrary Run
 
-Чтобы показать, что проект не hardcoded под встроенный demo dataset, можно сделать второй прогон:
+Чтобы показать, что проект не hardcoded под встроенный demo dataset, допустим второй прогон:
 
-1. Подготовить свой CSV или JSON с полями `review_id`, `source`, `text`, `created_at`.
+1. Подготовить произвольный CSV или JSON с полями `review_id`, `source`, `text`, `created_at`.
 1. Загрузить его через UI или `POST /api/sessions/upload`.
 1. Дождаться завершения batch-job.
 1. Проверить, что:
@@ -109,9 +109,9 @@
 python check.py --file path/to/your_reviews.csv --question "Which topic is spiking this week?"
 ```
 
-## Suggested Submission Text
+## Suggested submission text
 
-Ниже готовый текст, который можно использовать при отправке проекта:
+Ниже приведён пример текста для submission:
 
 ```text
 Repository: https://github.com/rizvansky/product-feedback-intelligence-agent

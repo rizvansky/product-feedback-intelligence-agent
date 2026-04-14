@@ -2,7 +2,7 @@
 
 PFIA - это PoC-система для пакетного анализа пользовательского фидбека: загрузка CSV/JSON, анонимизация PII, тематическая кластеризация, приоритизация проблем, anomaly detection, Markdown-отчёт и grounded Q&A по уже обработанной сессии.
 
-Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite, persistent Chroma-backed retrieval с projection fallback и отдельный `Next.js` frontend с proxy-контуром до FastAPI API. При наличии `OPENAI_API_KEY` можно включить proposal-grade embedding path (`text-embedding-3-small`) и LLM-backed multi-agent runtime. Local `sentence-transformers` fallback остаётся доступным, но в production Docker image по умолчанию не ставится, чтобы Railway build оставался в адекватном размере и не тянул `torch`/CUDA stack.
+Репозиторий содержит рабочий PoC, который запускается локально без внешних API-ключей. По умолчанию локальный demo использует offline-профиль: локальная аналитика, SQLite, persistent Chroma-backed retrieval с projection fallback и отдельный `Next.js` frontend с proxy-контуром до FastAPI API. При наличии `OPENAI_API_KEY` включается proposal-grade embedding path (`text-embedding-3-small`) и LLM-backed multi-agent runtime. Local `sentence-transformers` fallback остаётся доступным, но в production Docker image по умолчанию не ставится, чтобы Railway build не раздувался из-за `torch`/CUDA stack.
 
 ## Live Demo
 
@@ -31,7 +31,7 @@ PFIA - это PoC-система для пакетного анализа пол
   - `/health/ready`
   - `/metrics`
 
-## Что Реализовано
+## Что реализовано
 
 - Upload отзывов в формате CSV/JSON через web UI и HTTP API.
 - Асинхронный batch-flow через `job` + отдельный worker process.
@@ -84,7 +84,7 @@ PFIA - это PoC-система для пакетного анализа пол
   - canonical full profile: `frontend + api + chroma`;
   - operational fallback profile: `api` only с embedded worker и built-in UI.
 
-## Реальный Stack В Репозитории
+## Реальный stack в репозитории
 
 Репозиторий поддерживает два рабочих deployment/runtime профиля:
 
@@ -111,9 +111,9 @@ PFIA - это PoC-система для пакетного анализа пол
 - `api`: FastAPI + embedded worker + volume `/data`;
 - `chroma`: отдельный Chroma HTTP-service + volume `/data`.
 
-Fallback single-service профиль доступен, но его стоит рассматривать как упрощённый operational mode, а не как основной proposal-aligned deploy.
+Fallback single-service профиль остаётся поддерживаемым, но рассматривается как упрощённый operational mode, а не как основной proposal-aligned deploy.
 
-## Быстрый Старт
+## Быстрый старт
 
 ### Вариант 1. Docker Compose
 
@@ -147,7 +147,7 @@ docker compose up --build
 Примечание: внутри Docker data dir принудительно переопределяется в `/app/data/runtime`, поэтому локальный host-path и контейнерный path не конфликтуют.
 Примечание: local `docker compose` по умолчанию собирает `api/worker` image без `spaCy`-моделей и без local `sentence-transformers`, чтобы сборка оставалась легче и быстрее.
 
-Если нужен максимально полный local Docker path:
+Для максимально полного local Docker path:
 
 ```bash
 PFIA_INSTALL_SPACY_MODELS=true PFIA_INSTALL_LOCAL_EMBEDDINGS=true docker compose build
@@ -160,7 +160,7 @@ docker compose up -d
 docker compose down -v
 ```
 
-### Вариант 2. Локальный Запуск Без Docker
+### Вариант 2. Локальный запуск без Docker
 
 Требования:
 
@@ -178,7 +178,7 @@ make install
 - dev tooling;
 - local `sentence-transformers` fallback для embeddings.
 
-Если нужен облегчённый локальный runtime без `sentence-transformers`:
+Для облегчённого локального runtime без `sentence-transformers`:
 
 ```bash
 make install-minimal
@@ -238,7 +238,7 @@ make run-frontend
 
 ### LLM Multi-Agent Mode
 
-Чтобы включить proposal-aligned runtime с `OpenAI` embeddings + generation, `Mistral` как generation fallback 1 и `Anthropic` как generation fallback 2, задай в `.env`:
+Для proposal-aligned runtime с `OpenAI` embeddings + generation, `Mistral` как generation fallback 1 и `Anthropic` как generation fallback 2, в `.env` используется следующий набор:
 
 ```bash
 PFIA_ORCHESTRATOR_BACKEND=langgraph
@@ -261,7 +261,7 @@ PFIA_LLM_SECOND_FALLBACK_MODEL=claude-3-5-haiku-latest
 PFIA_LLM_MAX_TOOL_STEPS=4
 ```
 
-Чтобы privacy path действительно использовал `spaCy`, а не только `regex`, локально установи модели:
+Чтобы privacy path действительно использовал `spaCy`, а не только `regex`, локально устанавливаются модели:
 
 ```bash
 make install-spacy-models
@@ -284,7 +284,7 @@ make install-spacy-models
 - Q&A выполняется через `QueryPlannerAgent` и `AnswerWriterAgent`, которые оркестрируют retrieval tools;
 - при проблемах с OpenAI система сначала пытается перейти на `Mistral`, затем на `Anthropic`, и только потом откатывается на локальный deterministic fallback.
 
-Как убедиться, что сработал именно внешний LLM path:
+Признаки того, что используется внешний LLM path:
 
 - в UI и `GET /api/sessions/{session_id}` появляется `runtime_metadata`;
 - `runtime_profile` должен быть `llm-enhanced`;
@@ -315,7 +315,7 @@ make install-spacy-models
 
 ## Railway Deploy
 
-Для полного hosted deploy в Railway ориентируйся на [docs/deploy/railway.md](docs/deploy/railway.md).
+Полный hosted deploy в Railway описан в [docs/deploy/railway.md](docs/deploy/railway.md).
 
 Коротко, canonical профиль сейчас такой:
 
@@ -335,7 +335,7 @@ make install-spacy-models
 
 - production `api` image по умолчанию **не** ставит `sentence-transformers`, потому что это тащит `torch` и может раздувать image выше лимита Railway;
 - поэтому в hosted standard profile embedding fallback идёт `OpenAI -> projection`, а не `OpenAI -> sentence-transformers -> projection`;
-- если у тебя план и budget позволяют более тяжёлый image, local embedding fallback можно вернуть build arg'ом `PFIA_INSTALL_LOCAL_EMBEDDINGS=true`, но это уже не оптимальный дефолт для Railway.
+- при более высоких лимитах local embedding fallback может быть возвращён build arg'ом `PFIA_INSTALL_LOCAL_EMBEDDINGS=true`, но этот режим не является оптимальным дефолтом для Railway.
 
 ### Optional Tracing Sinks
 
@@ -358,7 +358,7 @@ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://your-otlp-endpoint/v1/traces
 - LangSmith и OTLP sinks включаются только если заданы env vars и доступны зависимости;
 - observability sinks никогда не блокируют основной pipeline: при ошибке telemetry silently drops.
 
-## Произвольный Прогон
+## Произвольный прогон
 
 Проект не завязан на встроенный demo dataset. Через Next.js UI, fallback FastAPI UI и HTTP API можно загрузить произвольный CSV/JSON.
 
@@ -420,7 +420,7 @@ python check.py --file path/to/reviews.csv --question "Which topic is spiking th
 - печатает `runtime_profile`, `orchestrator_backend_effective`, `generation_backend_effective`, `retrieval_backend_effective`, `input_filename`, `top_cluster_ids`;
 - задаёт произвольный grounded question после завершения обработки.
 
-Если взять другой файл, другие размеры батча и другой вопрос, ответы и runtime metadata будут другими. Это самый простой способ показать, что демо не hardcoded.
+При использовании другого файла, другого размера батча и другого вопроса меняются и ответы, и runtime metadata. Это базовая проверка того, что демо не hardcoded.
 
 ## Automated Acceptance Evals
 
@@ -445,7 +445,7 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 - recovery после simulated in-flight crash;
 - наличие runtime metadata и runtime appendix в report.
 
-## Демонстрационный Сценарий
+## Демонстрационный сценарий
 
 В репозитории уже лежит demo dataset:
 
@@ -488,7 +488,7 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 - `GET /health/ready`
 - `GET /metrics`
 
-## Что Проверено В Этом Репозитории
+## Что проверено в этом репозитории
 
 Проверки, выполненные на текущем состоянии проекта:
 
@@ -515,7 +515,7 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
   - `chroma_mode_effective=http`;
   - hosted Q&A возвращает grounded answer по `payment_flow_crashes_1` без `degraded_mode`
 
-## Качество И Безопасность
+## Качество и безопасность
 
 В PoC уже заложены базовые guardrails:
 
@@ -542,7 +542,7 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 - LLM cluster review
 - LLM anomaly explainer
 
-## Подготовка К Будущему Деплою
+## Подготовка к будущему деплою
 
 Почва под деплой уже подготовлена:
 
@@ -560,9 +560,9 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 - fallback single-service mode поддерживается, но не считается основным proposal-aligned deploy
 - Railway volume path и `PORT` подхватываются автоматически
 
-### Railway-First Деплой
+### Railway-first деплой
 
-Для полного hosted deployment в текущем состоянии проекта рекомендован `Railway`.
+Для полного hosted deployment в текущем состоянии проекта базовой платформой считается `Railway`.
 
 В репозитории уже лежит:
 
@@ -574,7 +574,7 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
   - если есть platform `PORT`, API слушает его без дополнительных флагов;
   - если есть Railway volume, автоматически включается embedded worker.
 
-Практически это означает, что для первого деплоя позже понадобится:
+Для первого деплоя требуется:
 
 1. Создать Railway project из этого репозитория.
 1. Поднять отдельные services:
@@ -617,4 +617,4 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 - [Testing Playbook](docs/testing-playbook.md)
 - [LLM Runtime Strategy](docs/llm-runtime.md)
 
-Для сдачи и деплоя ориентироваться стоит на этот `README`, [docs/testing-playbook.md](docs/testing-playbook.md), [docs/llm-runtime.md](docs/llm-runtime.md) и фактический код в репозитории.
+Основные документы для сдачи и деплоя: этот `README`, [docs/testing-playbook.md](docs/testing-playbook.md), [docs/llm-runtime.md](docs/llm-runtime.md) и фактический код в репозитории.

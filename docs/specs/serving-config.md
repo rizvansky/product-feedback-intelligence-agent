@@ -184,13 +184,13 @@ Production `api` image по умолчанию устанавливает `en_co
 
 - Railway / production image: `true`;
 - local `docker compose`: `false`;
-- если нужен full privacy path локально в Docker, включай build arg вручную.
+- для full privacy path локально в Docker build arg включается вручную.
 
 Для `PFIA_INSTALL_LOCAL_EMBEDDINGS`:
 
 - Railway / production image: `false` по умолчанию;
-- local full-offline Docker: `true`, только если нужен именно local embeddings fallback;
-- если включить этот arg в Railway, image заметно вырастет.
+- local full-offline Docker: `true`, только если требуется local embeddings fallback;
+- включение этого arg в Railway заметно увеличивает image.
 
 ## Frontend Proxy Config
 
