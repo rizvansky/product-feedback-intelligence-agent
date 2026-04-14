@@ -11,15 +11,14 @@
 
 ## What Is Deployed
 
-На Railway задеплоен текущий PoC-профиль проекта:
+В репозитории подготовлен canonical Railway-профиль проекта:
 
-- один web service;
-- FastAPI API + встроенный статический UI;
-- embedded background worker в том же процессе;
-- persistent Railway volume;
-- SQLite + persistent Chroma retrieval + session fallback index.
+- `frontend` service на `Next.js`;
+- `api` service с FastAPI API и embedded worker;
+- `chroma` service как отдельный HTTP vector store;
+- persistent Railway volumes для `api` и `chroma`.
 
-В репозитории есть как multi-service профиль с отдельным `Next.js` frontend, так и hosted single-service профиль для быстрого публичного демо. Текущий Railway URL развёрнут в single-service режиме.
+Упрощённый single-service профиль тоже доступен в коде, но он считается operational fallback, а не основным proposal-aligned deploy.
 
 ## Quick Check
 

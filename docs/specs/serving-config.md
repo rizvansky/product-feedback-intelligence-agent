@@ -21,13 +21,21 @@
 - local storage volume для upload-файлов, sanitized artifacts и reports;
 - session pickle fallback рядом с Chroma collections для report sections, trends и lexical retrieval fallback.
 
-Hosted deploy profile для Railway использует один web-service:
+Hosted deploy profile для Railway имеет два варианта:
 
-- `api` остаётся FastAPI serving layer;
-- `worker` поднимается как embedded background thread внутри того же процесса;
-- runtime state уходит в Railway volume через `RAILWAY_VOLUME_MOUNT_PATH`.
-- production image по умолчанию устанавливает `en_core_web_sm` и `ru_core_news_sm`.
-- built-in FastAPI UI доступен и в single-service profile.
+- canonical full profile:
+  - `frontend` как отдельный public service;
+  - `api` как отдельный private/public service;
+  - `chroma` как отдельный private service;
+  - embedded worker внутри `api`;
+  - volumes у `api` и `chroma`.
+- fallback profile:
+  - один `api` web-service;
+  - embedded worker внутри того же процесса;
+  - runtime state уходит в Railway volume через `RAILWAY_VOLUME_MOUNT_PATH`;
+  - built-in FastAPI UI остаётся доступным.
+
+Production `api` image по умолчанию устанавливает `en_core_web_sm` и `ru_core_news_sm`, но **не** ставит local `sentence-transformers` fallback, чтобы Railway build не раздувался из-за `torch`/CUDA stack.
 
 ## Обязательные конфиги
 
@@ -138,11 +146,12 @@ Hosted deploy profile для Railway использует один web-service:
 |---|---|
 | `pfia-web` | от 1 vCPU / 1 GB |
 
-Если нужен hosted profile с отдельным frontend, добавляется ещё один service:
+Если нужен canonical hosted full profile, добавляются ещё сервисы:
 
 | Компонент | CPU / RAM target |
 |---|---|
 | `pfia-frontend` | от 0,5 vCPU / 512 MB |
+| `pfia-chroma` | от 0,5 vCPU / 1 GB |
 
 ## Секреты
 
@@ -162,12 +171,19 @@ Hosted deploy profile для Railway использует один web-service:
 | Build arg | Назначение |
 |---|---|
 | `PFIA_INSTALL_SPACY_MODELS` | включает установку `en_core_web_sm` и `ru_core_news_sm` во время `docker build` |
+| `PFIA_INSTALL_LOCAL_EMBEDDINGS` | включает optional install `sentence-transformers` в `api/worker` image |
 
 Политика по умолчанию:
 
 - Railway / production image: `true`;
 - local `docker compose`: `false`;
 - если нужен full privacy path локально в Docker, включай build arg вручную.
+
+Для `PFIA_INSTALL_LOCAL_EMBEDDINGS`:
+
+- Railway / production image: `false` по умолчанию;
+- local full-offline Docker: `true`, только если нужен именно local embeddings fallback;
+- если включить этот arg в Railway, image заметно вырастет.
 
 ## Frontend Proxy Config
 

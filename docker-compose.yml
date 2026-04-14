@@ -22,28 +22,30 @@ services:
     restart: unless-stopped
   chroma:
     build:
-      context: .
-      args:
-        PFIA_INSTALL_SPACY_MODELS: ${PFIA_INSTALL_SPACY_MODELS-false}
+      context: ./chroma
     command:
-      - chroma
-      - run
-      - --host
-      - 0.0.0.0
-      - --port
-      - '8001'
-      - --path
-      - /chroma-data
-    environment:
-      IS_PERSISTENT: 'TRUE'
+      - sh
+      - -c
+      - chroma run --host 0.0.0.0 --port 8001 --path /data/chroma
     ports: [8001:8001]
-    volumes: [pfia_chroma_data:/chroma-data]
+    volumes: [pfia_chroma_data:/data]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/v2/heartbeat')
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
   api:
     build:
       context: .
       args:
         PFIA_INSTALL_SPACY_MODELS: ${PFIA_INSTALL_SPACY_MODELS-false}
+        PFIA_INSTALL_LOCAL_EMBEDDINGS: ${PFIA_INSTALL_LOCAL_EMBEDDINGS-false}
     command: [pfia-api, --host, 0.0.0.0, --port, '8000']
     env_file: [.env.example]
     environment:
@@ -53,6 +55,9 @@ services:
       PFIA_CHROMA_PORT: 8001
     ports: [8000:8000]
     volumes: [pfia_data:/app/data/runtime]
+    depends_on:
+      chroma:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD
@@ -69,6 +74,7 @@ services:
       context: .
       args:
         PFIA_INSTALL_SPACY_MODELS: ${PFIA_INSTALL_SPACY_MODELS-false}
+        PFIA_INSTALL_LOCAL_EMBEDDINGS: ${PFIA_INSTALL_LOCAL_EMBEDDINGS-false}
     command: [pfia-worker]
     env_file: [.env.example]
     environment:
@@ -81,7 +87,7 @@ services:
       api:
         condition: service_healthy
       chroma:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 volumes:
   pfia_data:

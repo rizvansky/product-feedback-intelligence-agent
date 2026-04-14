@@ -2,7 +2,7 @@
 
 PFIA - это PoC-система для пакетного анализа пользовательского фидбека: загрузка CSV/JSON, анонимизация PII, тематическая кластеризация, приоритизация проблем, anomaly detection, Markdown-отчёт и grounded Q&A по уже обработанной сессии.
 
-Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite, persistent Chroma-backed retrieval с projection fallback и отдельный `Next.js` frontend с proxy-контуром до FastAPI API. При наличии `OPENAI_API_KEY` можно включить proposal-grade embedding path (`text-embedding-3-small`) и LLM-backed multi-agent runtime, а при сбое внешних provider'ов сервис автоматически возвращается к local sentence-transformers или deterministic fallback path.
+Текущий репозиторий уже содержит рабочий PoC, который можно запустить локально без внешних API-ключей. Для локального demo по умолчанию используется offline-профиль: локальная аналитика, SQLite, persistent Chroma-backed retrieval с projection fallback и отдельный `Next.js` frontend с proxy-контуром до FastAPI API. При наличии `OPENAI_API_KEY` можно включить proposal-grade embedding path (`text-embedding-3-small`) и LLM-backed multi-agent runtime. Local `sentence-transformers` fallback остаётся доступным, но в production Docker image по умолчанию не ставится, чтобы Railway build оставался в адекватном размере и не тянул `torch`/CUDA stack.
 
 ## Live Demo
 
@@ -77,14 +77,17 @@ PFIA - это PoC-система для пакетного анализа пол
   - mixed-language review count;
   - per-agent usage snapshot.
 - Health endpoints, Prometheus-compatible `/metrics`, Docker Compose, demo dataset и тесты.
-- Hosted deploy profile под Railway: single-service режим с embedded worker и persistent volume.
+- Hosted deploy profile под Railway:
+  - canonical full profile: `frontend + api + chroma`;
+  - operational fallback profile: `api` only c embedded worker и built-in UI.
 
 ## Реальный Stack В Репозитории
 
 Репозиторий поддерживает два рабочих deployment/runtime профиля:
 
 - `compose / multi-service`: отдельные `frontend`, `api`, `worker`, `chroma`.
-- `hosted / single-service`: `api` + embedded worker + persistent volume.
+- `railway / full profile`: отдельные `frontend`, `api`, `chroma`, где worker живёт embedded inside `api`.
+- `hosted / fallback profile`: только `api` + embedded worker + persistent volume.
 
 Состав сервисов и модульные границы при этом остаются одинаковыми:
 
@@ -93,13 +96,19 @@ PFIA - это PoC-система для пакетного анализа пол
 - `worker`: отдельный Python worker для очереди jobs;
 - `storage`: SQLite + локальные файлы артефактов + `Chroma` vector store + session pickle fallback для retrieval.
 
-Для hosted deployment в репозитории подготовлен single-service профиль:
+Для Railway в репозитории подготовлены service-specific configs:
 
-- `api + embedded worker`: один web-service process с фоновым worker thread.
-- `storage`: Railway volume, автоматически подхватываемый через `RAILWAY_VOLUME_MOUNT_PATH`.
-- `port binding`: приложение понимает как `PFIA_PORT`, так и platform-provided `PORT`.
+- `railway.json` в корне для `api`;
+- `frontend/railway.json` для `frontend`;
+- `chroma/railway.json` для отдельного `chroma` service.
 
-Такой профиль удобнее для SQLite/file-based PoC, чем разнос `api` и `worker` по отдельным hosted services без общего локального диска.
+Канонический Railway-профиль для наиболее полной реализации proposal:
+
+- `frontend`: публичный `Next.js` service;
+- `api`: FastAPI + embedded worker + volume `/data`;
+- `chroma`: отдельный Chroma HTTP-service + volume `/data`.
+
+Fallback single-service профиль доступен, но его стоит рассматривать как simplified operational mode, а не как основной proposal-aligned deploy.
 
 ## Быстрый Старт
 
@@ -133,12 +142,12 @@ docker compose up --build
 - `api` и `worker` подключаются к нему через `PFIA_CHROMA_MODE=http`.
 
 Примечание: внутри Docker data dir принудительно переопределяется в `/app/data/runtime`, поэтому локальный host-path и контейнерный path не конфликтуют.
-Примечание: local `docker compose` по умолчанию собирает image без `spaCy`-моделей, чтобы сборка оставалась легче и быстрее.
+Примечание: local `docker compose` по умолчанию собирает `api/worker` image без `spaCy`-моделей и без local `sentence-transformers`, чтобы сборка оставалась легче и быстрее.
 
-Если нужен proposal-grade privacy path в Docker локально:
+Если нужен максимально полный local Docker path:
 
 ```bash
-PFIA_INSTALL_SPACY_MODELS=true docker compose build
+PFIA_INSTALL_SPACY_MODELS=true PFIA_INSTALL_LOCAL_EMBEDDINGS=true docker compose build
 docker compose up -d
 ```
 
@@ -158,7 +167,18 @@ docker compose down -v
 Установка зависимостей:
 
 ```bash
-./.venv/bin/python -m pip install -e ".[dev]"
+make install
+```
+
+Это ставит:
+
+- dev tooling;
+- local `sentence-transformers` fallback для embeddings.
+
+Если нужен облегчённый локальный runtime без `sentence-transformers`:
+
+```bash
+make install-minimal
 ```
 
 Запуск API:
@@ -249,7 +269,7 @@ make install-spacy-models
 Что меняется в этом режиме:
 
 - clustering и Chroma indexing сначала пытаются использовать `text-embedding-3-small`;
-- если embedding provider недоступен, runtime пытается перейти на local `sentence-transformers`, а затем на deterministic projection fallback;
+- если embedding provider недоступен, runtime пытается перейти на local `sentence-transformers`, если он установлен в образе, а затем на deterministic projection fallback;
 - privacy gate сначала использует regex, а при наличии локально установленных spaCy-моделей добавляет `ru_core_news_sm` / `en_core_web_sm` для masking person entities;
 - sentiment scoring сначала пытается использовать `VADER`, а для `ru` и при отсутствии зависимости автоматически откатывается на lexical fallback;
 - clustering engine прогоняет bounded HDBSCAN reflection loop: если silhouette ниже quality gate, он пробует до 3 профилей и сохраняет diagnostic trace в report/API;
@@ -289,6 +309,30 @@ make install-spacy-models
 - fallback обязателен, потому что PoC не должен зависеть от внешнего API как от единственной точки отказа.
 
 Подробное обоснование вынесено в [docs/llm-runtime.md](docs/llm-runtime.md).
+
+## Railway Deploy
+
+Для полного hosted deploy в Railway ориентируйся на [docs/deploy/railway.md](docs/deploy/railway.md).
+
+Коротко, canonical профиль сейчас такой:
+
+1. `api` service:
+   - root directory: repository root;
+   - config: [railway.json](railway.json);
+   - volume mount: `/data`.
+1. `frontend` service:
+   - root directory: `frontend/`;
+   - config: [frontend/railway.json](frontend/railway.json).
+1. `chroma` service:
+   - root directory: `chroma/`;
+   - config: [chroma/railway.json](chroma/railway.json);
+   - volume mount: `/data`.
+
+Критичный инфраструктурный момент:
+
+- production `api` image по умолчанию **не** ставит `sentence-transformers`, потому что это тащит `torch` и может раздувать image выше лимита Railway;
+- поэтому в hosted standard profile embedding fallback идёт `OpenAI -> projection`, а не `OpenAI -> sentence-transformers -> projection`;
+- если у тебя план и budget позволяют более тяжёлый image, local embedding fallback можно вернуть build arg'ом `PFIA_INSTALL_LOCAL_EMBEDDINGS=true`, но это уже не оптимальный дефолт для Railway.
 
 ### Optional Tracing Sinks
 
@@ -445,7 +489,7 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 
 Проверки, выполненные на текущем состоянии проекта:
 
-- `pytest`: `33 passed`
+- `pytest`: `38 passed`
 - `npm --prefix frontend run build`
 - `pfia.evals` acceptance harness
 - локальный smoke batch-flow
@@ -491,27 +535,29 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 
 Почва под деплой уже подготовлена:
 
-- один и тот же image используется и для `api`, и для `worker`
+- один и тот же slim Python image используется для `api` и `worker`
 - все runtime-настройки вынесены в env vars
 - state хранится в persistent volume
 - есть health endpoints для orchestrator / platform probes
 - есть `/metrics` для Prometheus-compatible scraping
 - запуск не зависит от платных API-ключей
-- есть `railway.json` для config-as-code
-- single-service hosted mode не требует отдельного worker service
+- есть service-specific Railway configs:
+  - root [railway.json](railway.json) для `api`
+  - [frontend/railway.json](frontend/railway.json) для `frontend`
+  - [chroma/railway.json](chroma/railway.json) для `chroma`
+- canonical hosted profile = `frontend + api + chroma`
+- fallback single-service mode поддерживается, но не считается основным proposal-aligned deploy
 - Railway volume path и `PORT` подхватываются автоматически
 
 ### Railway-First Деплой
 
-Для самого простого hosted deployment в текущем состоянии проекта рекомендован `Railway`.
+Для полного hosted deployment в текущем состоянии проекта рекомендован `Railway`.
 
 В репозитории уже лежит:
 
-- `railway.json`:
-  - `DOCKERFILE` build;
-  - `numReplicas=1` из-за SQLite + file artifacts;
-  - healthcheck на `/health/ready`;
-  - обязательный mount path `/data`.
+- отдельные Railway service configs для `api`, `frontend` и `chroma`;
+- slim production `Dockerfile`, который по умолчанию не ставит `sentence-transformers`, чтобы не раздувать image выше лимитов Railway;
+- отдельный [chroma/Dockerfile](chroma/Dockerfile) для standalone Chroma service;
 - platform-aware runtime:
   - если есть `RAILWAY_VOLUME_MOUNT_PATH`, приложение автоматически переносит runtime state в volume;
   - если есть platform `PORT`, API слушает его без дополнительных флагов;
@@ -520,9 +566,17 @@ PFIA_DATA_DIR=data/runtime PYTHONPATH=src ./.venv/bin/python -m pfia.evals
 Практически это означает, что для первого деплоя позже понадобится:
 
 1. Создать Railway project из этого репозитория.
-1. Подключить один volume и смонтировать его в `/data`.
-1. При необходимости включить OpenAI runtime через Railway Variables.
-1. Сгенерировать public domain.
+1. Поднять отдельные services:
+   - `api` из repo root
+   - `frontend` из `frontend/`
+   - `chroma` из `chroma/`
+1. Подключить volume `/data` к `api`.
+1. Подключить volume `/data` к `chroma`.
+1. Задать private networking:
+   - `frontend -> api`
+   - `api -> chroma`
+1. При необходимости включить OpenAI / Mistral / Anthropic runtime через Railway Variables.
+1. Сгенерировать public domain для `frontend`.
 
 Подробный runbook лежит в [docs/deploy/railway.md](docs/deploy/railway.md).
 

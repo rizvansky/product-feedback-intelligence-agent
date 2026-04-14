@@ -1,6 +1,9 @@
-.PHONY: install install-spacy-models frontend-install test evals run-api run-worker run-embedded run-frontend demo
+.PHONY: install install-minimal install-spacy-models frontend-install test evals run-api run-worker run-embedded run-frontend demo
 
 install:
+	./.venv/bin/python -m pip install -e ".[dev,local-embeddings]"
+
+install-minimal:
 	./.venv/bin/python -m pip install -e ".[dev]"
 
 install-spacy-models:

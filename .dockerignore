@@ -8,3 +8,8 @@ data/runtime
 *.pyc
 *.pyo
 *.pyd
+chroma
+docs
+frontend
+tests
+check.py

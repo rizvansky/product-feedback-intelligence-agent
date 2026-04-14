@@ -1,198 +1,402 @@
 # Railway Deploy Runbook
 
-Этот runbook описывает рекомендуемый hosted deploy: один Railway web service + один persistent volume. Для этого проекта это хороший operational tradeoff, потому что runtime state хранится в SQLite, report artifacts и persistent Chroma storage на локальном диске.
+Этот документ фиксирует **канонический Railway deploy** для текущего состояния PFIA. Он рассчитан на полный hosted-профиль, наиболее близкий к текущим `.md`-документам и runtime-контрактам:
 
-Репозиторий также поддерживает расширенный hosted профиль с отдельными сервисами для `frontend` и `chroma`. Ниже сначала описан быстрый single-service rollout, затем optional multi-service расширения.
+- `frontend` - отдельный `Next.js` service;
+- `api` - FastAPI API + embedded worker;
+- `chroma` - отдельный Chroma HTTP-service;
+- persistent volumes для `api` и `chroma`.
 
-## Целевой Профиль
+В конце отдельно описан упрощённый fallback-профиль `api-only`.
 
-- один сервис `pfia-web`
-- один Railway volume, смонтированный в `/data`
-- одна реплика
-- встроенный background worker внутри web process
-- platform domain Railway на первом этапе
+## 1. Что именно деплоим
 
-Почему именно так:
+### 1.1 `api`
 
-- `SQLite + local artifacts` плохо сочетаются с разнесением `api` и `worker` по разным hosted services без общего диска
-- один сервис даёт самый быстрый путь к публичному URL
-- `railway.json` уже зафиксировал безопасные deploy defaults
+- Root directory: repository root
+- Config file: [railway.json](../../railway.json)
+- Dockerfile: [Dockerfile](../../Dockerfile)
+- Role:
+  - FastAPI API
+  - embedded worker
+  - SQLite state
+  - reports / traces / sanitized artifacts
+  - retrieval orchestration against external `chroma`
 
-## Что Уже Подготовлено В Репозитории
+### 1.2 `frontend`
 
-- `Dockerfile` для production-style container build
-- `railway.json` с:
-  - `DOCKERFILE` builder
-  - `startCommand=pfia-api --host 0.0.0.0`
-  - `healthcheckPath=/health/ready`
-  - `numReplicas=1`
-  - `requiredMountPath=/data`
-- platform-aware config:
-  - `PORT` подхватывается автоматически
-  - `RAILWAY_VOLUME_MOUNT_PATH` автоматически переводит runtime state в persistent volume
-  - наличие Railway volume автоматически включает embedded worker mode
+- Root directory: `frontend/`
+- Config file: [frontend/railway.json](../../frontend/railway.json)
+- Dockerfile: [frontend/Dockerfile](../../frontend/Dockerfile)
+- Role:
+  - public `Next.js` UI
+  - same-origin browser surface
+  - rewrite proxy `/pfia/* -> api`
 
-## Порядок Деплоя
+### 1.3 `chroma`
 
-1. Запушить актуальную ветку в GitHub.
-1. В Railway создать новый проект из этого репозитория.
-1. Убедиться, что сервис собрался из `Dockerfile`.
-1. Добавить volume к этому сервису и смонтировать его в `/data`.
-1. Запустить деплой.
-1. После успешного старта сгенерировать public domain.
+- Root directory: `chroma/`
+- Config file: [chroma/railway.json](../../chroma/railway.json)
+- Dockerfile: [chroma/Dockerfile](../../chroma/Dockerfile)
+- Role:
+  - standalone Chroma server
+  - persistent vector collections
+  - HTTP endpoint for `api`
 
-На минимальном PoC-профиле дополнительные env vars не обязательны.
+## 2. Railway Project Layout
 
-## Рекомендуемые Переменные
+В одном Railway project создай **3 services**:
 
-Базовый deploy может работать и без них, но полезно явно зафиксировать:
+1. `api`
+1. `frontend`
+1. `chroma`
 
-- `PFIA_ENV=prod`
-- `PFIA_LOG_LEVEL=INFO`
-- `PFIA_MAX_QUEUE_DEPTH=3`
-- `PFIA_MAX_BATCH_SIZE=2000`
-- `PFIA_ORCHESTRATOR_BACKEND=langgraph`
-- `PFIA_RETRIEVAL_BACKEND=chroma`
-- `PFIA_PII_BACKEND=regex+spacy`
-- `PFIA_SENTIMENT_BACKEND=vader`
-- `PFIA_EMBEDDING_BACKEND=openai`
+И **2 volumes**:
+
+1. volume для `api` -> mount path `/data`
+1. volume для `chroma` -> mount path `/data`
+
+`frontend` volume не нужен.
+
+## 3. Service Setup
+
+### 3.1 `api` service
+
+Создай service из repository root.
+
+Ожидаемый config:
+
+- root directory: `/`
+- `railway.json` из repo root
+- required mount path: `/data`
+
+Что делает этот service:
+
+- сам слушает HTTP;
+- сам поднимает embedded worker;
+- пишет runtime state в `/data/runtime`.
+
+### 3.2 `frontend` service
+
+Создай service из поддиректории `frontend/`.
+
+Ожидаемый config:
+
+- root directory: `frontend`
+- `frontend/railway.json`
+- публичный домен должен быть выдан именно этому service
+
+### 3.3 `chroma` service
+
+Создай service из поддиректории `chroma/`.
+
+Ожидаемый config:
+
+- root directory: `chroma`
+- `chroma/railway.json`
+- volume mount: `/data`
+
+Этот service стартует через:
+
+```bash
+chroma run --host 0.0.0.0 --port ${PORT:-8000} --path /data/chroma
+```
+
+Healthcheck:
+
+- `/api/v2/heartbeat`
+
+## 4. Variables
+
+### 4.1 `api` variables
+
+Минимально рекомендуемый production набор:
+
+```text
+PFIA_ENV=prod
+PFIA_LOG_LEVEL=INFO
+PFIA_MAX_QUEUE_DEPTH=3
+PFIA_MAX_BATCH_SIZE=2000
+
+PFIA_ORCHESTRATOR_BACKEND=langgraph
+PFIA_RETRIEVAL_BACKEND=chroma
+PFIA_CHROMA_MODE=http
+PFIA_CHROMA_HOST=<private-chroma-host>
+PFIA_CHROMA_PORT=8000
+PFIA_CHROMA_SSL=false
+
+PFIA_PII_BACKEND=regex+spacy
+PFIA_SENTIMENT_BACKEND=vader
+
+PFIA_EMBEDDING_BACKEND=openai
+PFIA_EMBEDDING_PRIMARY_MODEL=text-embedding-3-small
+PFIA_EMBEDDING_FALLBACK_MODEL=paraphrase-multilingual-mpnet-base-v2
+
+PFIA_GENERATION_BACKEND=openai
+PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini
+PFIA_LLM_FALLBACK_MODEL=mistral-small-latest
+PFIA_LLM_SECOND_FALLBACK_MODEL=claude-3-5-haiku-latest
+PFIA_LLM_MAX_TOOL_STEPS=4
+
+OPENAI_API_KEY=<your_openai_key>
+MISTRAL_API_KEY=<your_mistral_key>
+ANTHROPIC_API_KEY=<your_anthropic_key>
+```
 
 Опционально:
 
-- `PFIA_GENERATION_BACKEND=openai`, если нужен LLM-backed runtime
-- `OPENAI_API_KEY`, если нужен primary provider OpenAI
-- `MISTRAL_API_KEY`, если нужен fallback provider Mistral
-- `ANTHROPIC_API_KEY`, если нужен tertiary fallback provider Anthropic
-- `PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini`
-- `PFIA_LLM_FALLBACK_MODEL=mistral-small-latest`
-- `PFIA_LLM_SECOND_FALLBACK_MODEL=claude-3-5-haiku-latest`
-- `PFIA_EMBEDDING_PRIMARY_MODEL=text-embedding-3-small`
-- `PFIA_EMBEDDING_FALLBACK_MODEL=paraphrase-multilingual-mpnet-base-v2`
-- `PFIA_LLM_MAX_TOOL_STEPS=4`
-- `OPENAI_BASE_URL`, если будет прокси или совместимый endpoint
-- `MISTRAL_BASE_URL`, если нужен совместимый endpoint
-- `ANTHROPIC_BASE_URL`, если нужен совместимый endpoint
+```text
+PFIA_OPENAI_TIMEOUT_S=30
+PFIA_OPENAI_MAX_RETRIES=2
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=<your_langsmith_key>
+LANGSMITH_PROJECT=pfia
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+PFIA_OTEL_TRACING_ENABLED=true
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=<your_otlp_endpoint>
+```
 
-Не нужно вручную задавать:
+Что **не нужно** вручную задавать:
 
-- `PFIA_PORT`: Railway сам передаст `PORT`
-- `PFIA_DATA_DIR`: при наличии volume путь будет вычислен автоматически
-- `PFIA_EMBEDDED_WORKER`: при наличии Railway volume режим включится автоматически
+- `PFIA_PORT`
+- `PORT`
+- `PFIA_DATA_DIR`
+- `PFIA_EMBEDDED_WORKER`
 
-## Как Включить LLM Providers На Railway
+Они вычисляются платформой и кодом автоматически.
 
-Добавить в Railway service variables:
+### 4.2 `frontend` variables
 
-- `PFIA_GENERATION_BACKEND=openai`
-- `PFIA_ORCHESTRATOR_BACKEND=langgraph`
-- `PFIA_RETRIEVAL_BACKEND=chroma`
-- `PFIA_EMBEDDING_BACKEND=openai`
-- `OPENAI_API_KEY=<your_openai_key>`
-- `MISTRAL_API_KEY=<your_mistral_key>`
-- `ANTHROPIC_API_KEY=<your_anthropic_key>`
-- `PFIA_EMBEDDING_PRIMARY_MODEL=text-embedding-3-small`
-- `PFIA_EMBEDDING_FALLBACK_MODEL=paraphrase-multilingual-mpnet-base-v2`
-- `PFIA_LLM_PRIMARY_MODEL=gpt-4o-mini`
-- `PFIA_LLM_FALLBACK_MODEL=mistral-small-latest`
-- `PFIA_LLM_SECOND_FALLBACK_MODEL=claude-3-5-haiku-latest`
-- `PFIA_LLM_MAX_TOOL_STEPS=4`
-- опционально `PFIA_OPENAI_TIMEOUT_S=30`
-- опционально `PFIA_OPENAI_MAX_RETRIES=2`
+Нужны:
 
-После этого сделать `Redeploy`.
+```text
+NEXT_PUBLIC_PFIA_API_BASE_URL=/pfia
+PFIA_INTERNAL_API_BASE_URL=http://<api-private-host>:8080
+```
 
-Что изменится:
+Смысл:
 
-- batch-стадии смогут использовать `PreprocessReviewAgent`, `ClusterReviewAgent`, `TaxonomyAgent`, `AnomalyExplainerAgent`, `ExecutiveSummaryAgent`;
-- privacy stage сможет реально использовать `regex+spacy`, потому что Railway image по умолчанию устанавливает `en_core_web_sm` и `ru_core_news_sm`;
-- embeddings и Chroma indexing сначала пойдут через `text-embedding-3-small`, потом через local `sentence-transformers`, затем через deterministic projection fallback;
-- Q&A пойдёт через `QueryPlannerAgent` и `AnswerWriterAgent`;
-- при проблемах с `OpenAI` runtime сначала попытается перейти на `Mistral`, затем на `Anthropic`, и только потом вернётся к deterministic fallback path.
+- browser остаётся на frontend domain;
+- Next.js proxy переправляет `/pfia/*` на private backend endpoint;
+- CORS не нужен.
 
-Как проверить, что на Railway реально работает внешний LLM path:
+### 4.3 `chroma` variables
 
-- выполнить batch-run;
-- открыть `GET /api/sessions/{session_id}`;
-- проверить, что `runtime_metadata.runtime_profile=llm-enhanced`;
-- проверить, что `runtime_metadata.orchestrator_backend_effective=langgraph`;
-- проверить, что `runtime_metadata.pii_backend_effective=regex+spacy`;
-- проверить, что `runtime_metadata.embedding_backend_effective` равно `openai`, `sentence-transformers`, `projection` или `mixed`;
-- проверить, что `runtime_metadata.generation_backend_effective` равно `openai`, `mistral`, `anthropic` или `mixed`;
-- проверить, что `runtime_metadata.retrieval_backend_effective=chroma`;
-- проверить, что в `runtime_metadata.agent_usage` есть `used=true` и `mode=openai`, `mode=mistral` или `mode=anthropic`;
-- проверить, что `POST /api/sessions/{session_id}/chat` возвращает `degraded_mode=false`.
+Минимально достаточно:
 
-## Что Проверить После Деплоя
+```text
+IS_PERSISTENT=TRUE
+```
 
-Открыть:
+Если service использует volume `/data`, этого достаточно.
+
+## 5. Private Networking
+
+Для корректной связи сервисов нужны два private адреса:
+
+1. `frontend -> api`
+1. `api -> chroma`
+
+Не подставляй публичные домены там, где должен идти internal traffic.
+
+Используй private hostnames / service-internal addresses Railway.
+
+Практически:
+
+- в `frontend`:
+  - `PFIA_INTERNAL_API_BASE_URL=http://<api-private-host>:8080`
+- в `api`:
+  - `PFIA_CHROMA_HOST=<chroma-private-host>`
+  - `PFIA_CHROMA_PORT=8000`
+
+## 6. Public Networking
+
+Публичный домен нужен только для `frontend`.
+
+Дополнительно публичный домен для `api` можно выдать, если хочешь отдельно проверять:
 
 - `/health/live`
 - `/health/ready`
 - `/metrics`
-- `/`
+- `POST /api/sessions/upload`
 
-Ожидаемое состояние:
+Но основной user-facing URL должен быть у `frontend`.
 
-- `/health/live` возвращает `200`
-- `/health/ready` возвращает `200`
-- в `/health/ready` видно `worker.mode=embedded`
-- `storage.data_dir` указывает на `/data/runtime`
-- после batch-run `PII_BACKEND` в `check.py --base-url <url>` должен быть `regex+spacy`
+## 7. Deployment Order
 
-Затем проверить пользовательский flow:
+Правильный порядок:
 
-1. Открыть UI.
-1. Нажать `Run Demo Dataset`.
-1. Дождаться статуса `COMPLETED`.
-1. Проверить, что report, clusters и runtime metadata отрисовались.
-1. В Q&A спросить: `What is the highest-priority issue and what evidence supports it?`
+1. Создать `chroma` service и прикрепить volume `/data`.
+1. Задеплоить `chroma`.
+1. Проверить `chroma` healthcheck.
+1. Создать `api` service и прикрепить volume `/data`.
+1. Задать `api` variables, включая `PFIA_CHROMA_HOST` и `PFIA_CHROMA_PORT`.
+1. Задеплоить `api`.
+1. Проверить `/health/live` и `/health/ready`.
+1. Создать `frontend` service.
+1. Задать `NEXT_PUBLIC_PFIA_API_BASE_URL=/pfia`.
+1. Задать `PFIA_INTERNAL_API_BASE_URL` на private `api` host.
+1. Задеплоить `frontend`.
+1. Сгенерировать public domain для `frontend`.
 
-## Optional Frontend Service
+## 8. Build Strategy Notes
 
-Если нужен hosted профиль с отдельным `Next.js` frontend:
+### 8.1 Build profile `api`
 
-1. Создать второй Railway service из поддиректории `frontend/`.
-1. В variables frontend service задать:
-   - `NEXT_PUBLIC_PFIA_API_BASE_URL=/pfia`
-   - `PFIA_INTERNAL_API_BASE_URL=http://<backend-private-domain-or-service-name>:8080`
-1. Сгенерировать public domain уже для frontend service.
-1. Backend service оставить приватным или использовать только для health/API smoke.
+В [Dockerfile](../../Dockerfile) используется:
 
-Смысл такой схемы:
+- `PFIA_INSTALL_LOCAL_EMBEDDINGS=false` по умолчанию
+- conditional install:
+  - `pip install .`
+  - или `pip install ".[local-embeddings]"`
 
-- browser остаётся на frontend domain;
-- Next.js proxy переправляет `/pfia/*` на внутренний backend URL;
-- CORS не нужен, потому что browser всё ещё работает same-origin через frontend.
+Это означает:
 
-## Optional Chroma Service
+- Railway `api` build не тянет `torch` и CUDA-пакеты без явного запроса;
+- production image остаётся slim;
+- hosted default profile для embeddings: `OpenAI -> projection fallback`.
 
-Если нужен hosted профиль с отдельным `Chroma` service:
+### 8.2 Когда включать `PFIA_INSTALL_LOCAL_EMBEDDINGS=true`
 
-1. Создать отдельный Railway service под `Chroma`.
-1. На backend service задать:
-   - `PFIA_RETRIEVAL_BACKEND=chroma`
-   - `PFIA_CHROMA_MODE=http`
-   - `PFIA_CHROMA_HOST=<private chroma hostname>`
-   - `PFIA_CHROMA_PORT=<private chroma port>`
-   - `PFIA_CHROMA_SSL=false`
-1. Проверить после batch-run, что в `runtime_metadata`:
-   - `retrieval_backend_effective=chroma`
-   - `chroma_mode_effective=http`
-   - `chroma_endpoint_effective` указывает на private service endpoint
+Только если:
 
-## Ограничения Текущего Hosted Профиля
+- тебе действительно нужен `sentence-transformers` fallback inside hosted image;
+- твой Railway plan выдерживает более тяжёлый image;
+- ты осознанно идёшь на более медленный build.
 
-- не масштабировать выше `1` реплики
-- не выносить API и worker в отдельные сервисы, пока state живёт в SQLite и локальных файлах
-- не рассчитывать на zero-downtime redeploy при attached volume
+Для стандартного Railway deploy этого делать **не надо**.
 
-## Следующий Шаг После Первого Деплоя
+## 9. Verification Checklist
 
-Когда этот профиль будет стабильно работать, можно переходить к следующему уровню:
+### 9.1 `chroma`
 
-- отдельный Railway service для `frontend/` с `PFIA_INTERNAL_API_BASE_URL` до backend service;
-- custom domain
-- managed Postgres вместо SQLite
-- object storage вместо локальных артефактов
-- разнос `api` и `worker` на отдельные hosted services
-- внешний LLM backend с секретами Railway
+Проверить:
+
+- service healthy
+- volume mounted at `/data`
+- heartbeat отвечает:
+  - `/api/v2/heartbeat`
+
+### 9.2 `api`
+
+Проверить:
+
+```text
+/health/live
+/health/ready
+/metrics
+```
+
+Ожидаемо:
+
+- `/health/live` -> `200`
+- `/health/ready` -> `200`
+- `worker.mode=embedded`
+- `storage.data_dir=/data/runtime`
+
+### 9.3 `frontend`
+
+Открыть public domain `frontend` service и проверить:
+
+1. `Run Demo Dataset`
+1. статус `COMPLETED`
+1. clusters / report / runtime metadata видны
+1. Q&A отвечает grounded evidence
+
+## 10. Runtime Metadata Expectations
+
+После успешного hosted run в `GET /api/sessions/{session_id}` ожидаемо:
+
+- `runtime_profile=llm-enhanced` при включённых provider keys
+- `orchestrator_backend_effective=langgraph`
+- `retrieval_backend_effective=chroma`
+- `chroma_mode_effective=http`
+- `chroma_endpoint_effective` указывает на private `chroma` endpoint
+- `pii_backend_effective=regex+spacy`
+- `generation_backend_effective=openai`, `mistral`, `anthropic` или `mixed`
+- `embedding_backend_effective=openai`, `projection` или `mixed`
+
+Важно:
+
+- если local `sentence-transformers` не установлен в hosted image, fallback логично уйдёт не в `sentence-transformers`, а в `projection`;
+- это ожидаемое поведение для slim Railway build.
+
+## 11. End-to-End Smoke
+
+После deploy:
+
+```bash
+python check.py --base-url https://<your-api-public-url>
+```
+
+Если публичного URL у `api` нет, проверяй через `frontend` UI и сравни:
+
+- session status
+- runtime metadata
+- Q&A answer
+
+Дополнительно загрузить свой CSV/JSON и убедиться, что:
+
+- `runtime_metadata.input_filename` меняется;
+- `top_cluster_ids` меняются;
+- report/Q&A зависят от реально загруженного файла.
+
+## 12. Common Failure Modes
+
+### `api` build тянет гигантский image
+
+Причина:
+
+- в build включён local embeddings stack.
+
+Что делать:
+
+- не включать `PFIA_INSTALL_LOCAL_EMBEDDINGS=true` в Railway `api` service.
+
+### `frontend` открывается, но API requests падают
+
+Причина:
+
+- неверный `PFIA_INTERNAL_API_BASE_URL`
+- frontend смотрит не в private `api`
+
+Что делать:
+
+- проверить `frontend` variables
+- проверить, что proxy target указывает на Railway internal hostname `api`
+
+### `api` ready, но retrieval не работает
+
+Причина:
+
+- `PFIA_CHROMA_MODE=http` не задан
+- неверный `PFIA_CHROMA_HOST`
+- `chroma` service unhealthy
+
+Что делать:
+
+- проверить `api` variables
+- проверить `chroma` health
+- проверить `runtime_metadata.chroma_mode_effective` и `chroma_endpoint_effective`
+
+### `chroma` service собран как PFIA API
+
+Причина:
+
+- для `chroma` выбран не тот root directory / config
+
+Что делать:
+
+- root directory должен быть `chroma/`
+- config должен быть `chroma/railway.json`
+
+## 13. Optional Fallback Profile
+
+Если нужно поднять проект максимально быстро и дёшево, всё ещё можно использовать:
+
+- только `api` service
+- встроенный FastAPI UI
+- embedded worker
+- embedded Chroma/persisted index
+
+Но это не основной proposal-aligned deploy. Для полного hosted профиля ориентируйся на `frontend + api + chroma`.

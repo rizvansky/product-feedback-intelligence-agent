@@ -19,13 +19,13 @@ dependencies = [
   "langgraph>=1.1.6",
   "httpx>=0.28.1",
   "prometheus-client>=0.25.0",
-  "sentence-transformers>=5.1.1",
   "spacy>=3.8.7",
   "vaderSentiment>=3.3.2",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0.3"]
+local-embeddings = ["sentence-transformers>=5.1.1"]
 
 [project.scripts]
 pfia-api = "pfia.api:main"

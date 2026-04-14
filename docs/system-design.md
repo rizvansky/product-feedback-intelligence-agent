@@ -18,7 +18,7 @@ ______________________________________________________________________
 - технические и операционные ограничения;
 - точки контроля, которые должны быть реализованы до перехода к demo-ready стадии.
 
-Документ описывает архитектуру PFIA и поддерживаемые deployment/runtime профили. Репозиторий включает отдельный `Next.js` frontend в `frontend/`, отдельный `chroma` service в local compose-профиле и встроенный FastAPI UI для single-service hosted deployment.
+Документ описывает архитектуру PFIA и поддерживаемые deployment/runtime профили. Репозиторий включает отдельный `Next.js` frontend в `frontend/`, отдельный `chroma` service в compose/extended-hosted профиле и встроенный FastAPI UI для fallback single-service deployment. Для Railway canonical full profile считается `frontend + api + chroma`; single-service `api` profile остаётся как упрощённый operational fallback.
 
 ______________________________________________________________________
 
